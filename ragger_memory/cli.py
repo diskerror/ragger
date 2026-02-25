@@ -51,74 +51,126 @@ def import_file(
     if metadata:
         source_meta.update(metadata)
     
-    # Split on paragraph boundaries, then break oversized paragraphs
-    # on sentence boundaries
-    chunks = []
-    current = ""
-    paragraphs = text.split('\n\n')
-    
-    # Pre-pass: merge headings with the following paragraph so they
-    # never end up as the tail of one chunk while their content starts
-    # the next.  A "heading" is any paragraph whose first line starts
-    # with '#' (Markdown).  Only merge once — if the result still looks
-    # like a heading (e.g. consecutive headings) we stop to avoid
-    # chaining everything into one giant block.
-    merged = []
-    pending_headings = []
-    for para in paragraphs:
+    # Split on paragraph boundaries with heading-aware chunking.
+    #
+    # Headings are tracked as a breadcrumb trail (e.g. "Intro - Setup - Step 1").
+    # Each chunk gets:
+    #   - The current heading(s) prepended to the text (improves embeddings)
+    #   - A "section" metadata field with the breadcrumb trail
+    #
+    # Consecutive headings accumulate and attach to the next body paragraph.
+    # Every body paragraph under a heading inherits that heading context.
+
+    raw_paragraphs = text.split('\n\n')
+
+    def _heading_level(line: str) -> int:
+        """Return heading level (1-6) or 0 if not a heading."""
+        m = re.match(r'^(#{1,6})\s', line)
+        return len(m.group(1)) if m else 0
+
+    def _heading_text(line: str) -> str:
+        """Strip '#' prefix from heading line."""
+        return re.sub(r'^#{1,6}\s+', '', line).strip()
+
+    # State: breadcrumb stack tracks the current section hierarchy
+    # Each entry is (level, heading_text)
+    heading_stack: list[tuple[int, str]] = []
+    pending_headings: list[str] = []  # raw heading lines waiting for body
+
+    def _current_section() -> str:
+        """Build breadcrumb from heading stack."""
+        return ' - '.join(h[1] for h in heading_stack)
+
+    def _current_heading_block() -> str:
+        """Build the heading lines to prepend to chunk text."""
+        if pending_headings:
+            return '\n\n'.join(pending_headings)
+        # Use the deepest heading in the stack
+        if heading_stack:
+            level, txt = heading_stack[-1]
+            return '#' * level + ' ' + txt
+        return ''
+
+    # Two-pass: first build (text, section) tuples, then chunk them
+    # Each tuple is a body paragraph with its heading context
+    annotated: list[tuple[str, str]] = []  # (text_with_heading, section_breadcrumb)
+
+    for para in raw_paragraphs:
         para = para.strip()
         if not para:
             continue
-        if para.lstrip().startswith('#'):
+
+        level = _heading_level(para)
+        if level > 0:
+            # Update the heading stack: pop anything at this level or deeper
+            while heading_stack and heading_stack[-1][0] >= level:
+                heading_stack.pop()
+            heading_stack.append((level, _heading_text(para)))
             pending_headings.append(para)
         else:
-            if pending_headings:
-                pending_headings.append(para)
-                merged.append('\n\n'.join(pending_headings))
-                pending_headings = []
+            # Body paragraph — attach pending headings and section breadcrumb
+            heading_block = '\n\n'.join(pending_headings) if pending_headings else _current_heading_block()
+            section = _current_section()
+            if heading_block:
+                full_text = heading_block + '\n\n' + para
             else:
-                merged.append(para)
-    if pending_headings:
-        merged.append('\n\n'.join(pending_headings))  # trailing headings with no body
-    paragraphs = merged
+                full_text = para
+            annotated.append((full_text, section))
+            pending_headings = []
 
-    for para in paragraphs:
-        para = para.strip()
-        if not para:
-            continue
-        
+    # Trailing headings with no body
+    if pending_headings:
+        section = _current_section()
+        annotated.append(('\n\n'.join(pending_headings), section))
+        pending_headings = []
+
+    # Now chunk the annotated paragraphs, preserving section metadata.
+    # When paragraphs are merged into one chunk, use the section from
+    # the first paragraph in the chunk.
+    chunks: list[tuple[str, str]] = []  # (chunk_text, section)
+    current = ""
+    current_section = ""
+
+    for full_text, section in annotated:
         # If this paragraph alone exceeds chunk_size, split on sentences
-        if len(para) > chunk_size:
+        if len(full_text) > chunk_size:
             if current:
-                chunks.append(current.strip())
+                chunks.append((current.strip(), current_section))
                 current = ""
+                current_section = ""
             # Split on sentence boundaries (. ! ? followed by space or end)
-            sentences = re.split(r'(?<=[.!?])\s+', para)
+            sentences = re.split(r'(?<=[.!?])\s+', full_text)
             for sentence in sentences:
                 candidate = current + (' ' if current else '') + sentence
                 if len(candidate) > chunk_size and current:
-                    chunks.append(current.strip())
+                    chunks.append((current.strip(), section))
                     current = sentence
                 else:
                     current = candidate
+            current_section = section
         else:
-            candidate = current + ('\n\n' if current else '') + para
+            candidate = current + ('\n\n' if current else '') + full_text
             if len(candidate) > chunk_size and current:
-                chunks.append(current.strip())
-                current = para
+                chunks.append((current.strip(), current_section))
+                current = full_text
+                current_section = section
             else:
+                if not current:
+                    current_section = section
                 current = candidate
     if current.strip():
-        chunks.append(current.strip())
-    
+        chunks.append((current.strip(), current_section))
+
     # Filter out empty chunks
-    chunks = [c for c in chunks if c]
+    chunks = [(t, s) for t, s in chunks if t]
     
     print(f"Importing {len(chunks)} chunks from {path.name}...")
-    for i, chunk in enumerate(chunks, 1):
+    for i, (chunk_text, section) in enumerate(chunks, 1):
         chunk_meta = source_meta.copy()
         chunk_meta.update({"chunk": i, "total_chunks": len(chunks)})
-        memory_id = memory.store(chunk, chunk_meta)
+        if section:
+            chunk_meta["section"] = section
+        memory_id = memory.store(chunk_text, chunk_meta)
         print(f"  Chunk {i}/{len(chunks)}: {memory_id}")
     print(f"✓ Imported {len(chunks)} chunks")
 
