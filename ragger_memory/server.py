@@ -1,0 +1,107 @@
+"""
+HTTP server for Ragger Memory
+"""
+
+import json
+import logging
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+from .memory import RaggerMemory
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_PORT = 8432
+
+# Module-level reference so the handler can access it
+_memory = None
+
+
+class RaggerHandler(BaseHTTPRequestHandler):
+    """HTTP request handler for memory operations"""
+    
+    def _read_body(self) -> dict:
+        length = int(self.headers.get('Content-Length', 0))
+        if length == 0:
+            return {}
+        return json.loads(self.rfile.read(length))
+    
+    def _respond(self, code: int, data: dict):
+        body = json.dumps(data).encode()
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    
+    def do_POST(self):
+        try:
+            params = self._read_body()
+            
+            if self.path == '/store':
+                text = params.get('text')
+                if not text:
+                    self._respond(400, {"error": "text required"})
+                    return
+                metadata = params.get('metadata')
+                memory_id = _memory.store(text, metadata)
+                self._respond(200, {"id": memory_id, "status": "stored"})
+            
+            elif self.path == '/search':
+                query = params.get('query')
+                if not query:
+                    self._respond(400, {"error": "query required"})
+                    return
+                limit = params.get('limit', 5)
+                min_score = params.get('min_score', 0.0)
+                results = _memory.search(query, limit, min_score)
+                # Convert datetime to string for JSON
+                for r in results:
+                    if r.get('timestamp'):
+                        r['timestamp'] = r['timestamp'].isoformat()
+                self._respond(200, {"results": results})
+            
+            elif self.path == '/count':
+                self._respond(200, {"count": _memory.count()})
+            
+            else:
+                self._respond(404, {"error": f"unknown endpoint: {self.path}"})
+        
+        except Exception as e:
+            logger.error(f"Request error: {e}")
+            self._respond(500, {"error": str(e)})
+    
+    def do_GET(self):
+        if self.path == '/health':
+            self._respond(200, {"status": "ok", "memories": _memory.count()})
+        elif self.path == '/count':
+            self._respond(200, {"count": _memory.count()})
+        else:
+            self._respond(404, {"error": f"unknown endpoint: {self.path}"})
+    
+    def log_message(self, format, *args):
+        """Route HTTP logs through our logger instead of stderr"""
+        logger.info(f"{self.address_string()} {format % args}")
+
+
+def run_server(port: int = DEFAULT_PORT):
+    """Start the HTTP server"""
+    global _memory
+    
+    _memory = RaggerMemory()
+    
+    server = HTTPServer(('127.0.0.1', port), RaggerHandler)
+    print(f"Ragger Memory server running on http://localhost:{port}")
+    print(f"Endpoints:")
+    print(f"  POST /store   - {{\"text\": \"...\", \"metadata\": {{...}}}}")
+    print(f"  POST /search  - {{\"query\": \"...\", \"limit\": 5}}")
+    print(f"  GET  /count   - memory count")
+    print(f"  GET  /health  - health check")
+    print(f"Press Ctrl+C to stop.")
+    
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+    finally:
+        server.server_close()
+        _memory.close()

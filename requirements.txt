@@ -1,0 +1,5 @@
+# Core dependencies
+pymongo>=4.0
+sentence-transformers
+torch
+numpy
