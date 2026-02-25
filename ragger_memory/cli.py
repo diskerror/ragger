@@ -64,21 +64,22 @@ def import_file(
     # like a heading (e.g. consecutive headings) we stop to avoid
     # chaining everything into one giant block.
     merged = []
-    pending_heading = None
+    pending_headings = []
     for para in paragraphs:
         para = para.strip()
         if not para:
             continue
-        if pending_heading is not None:
-            # Attach the heading to this paragraph regardless
-            merged.append(pending_heading + '\n\n' + para)
-            pending_heading = None
-        elif para.lstrip().startswith('#'):
-            pending_heading = para
+        if para.lstrip().startswith('#'):
+            pending_headings.append(para)
         else:
-            merged.append(para)
-    if pending_heading is not None:
-        merged.append(pending_heading)  # trailing heading with no body
+            if pending_headings:
+                pending_headings.append(para)
+                merged.append('\n\n'.join(pending_headings))
+                pending_headings = []
+            else:
+                merged.append(para)
+    if pending_headings:
+        merged.append('\n\n'.join(pending_headings))  # trailing headings with no body
     paragraphs = merged
 
     for para in paragraphs:
