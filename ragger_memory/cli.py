@@ -57,6 +57,30 @@ def import_file(
     current = ""
     paragraphs = text.split('\n\n')
     
+    # Pre-pass: merge headings with the following paragraph so they
+    # never end up as the tail of one chunk while their content starts
+    # the next.  A "heading" is any paragraph whose first line starts
+    # with '#' (Markdown).  Only merge once — if the result still looks
+    # like a heading (e.g. consecutive headings) we stop to avoid
+    # chaining everything into one giant block.
+    merged = []
+    pending_heading = None
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+        if pending_heading is not None:
+            # Attach the heading to this paragraph regardless
+            merged.append(pending_heading + '\n\n' + para)
+            pending_heading = None
+        elif para.lstrip().startswith('#'):
+            pending_heading = para
+        else:
+            merged.append(para)
+    if pending_heading is not None:
+        merged.append(pending_heading)  # trailing heading with no body
+    paragraphs = merged
+
     for para in paragraphs:
         para = para.strip()
         if not para:
