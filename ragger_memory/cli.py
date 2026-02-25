@@ -79,16 +79,16 @@ def import_file(
 
     def _current_section() -> str:
         """Build breadcrumb from heading stack."""
-        return ' - '.join(h[1] for h in heading_stack)
+        return ' » '.join(h[1] for h in heading_stack)
 
     def _current_heading_block() -> str:
-        """Build the heading lines to prepend to chunk text."""
-        if pending_headings:
-            return '\n\n'.join(pending_headings)
-        # Use the deepest heading in the stack
+        """Build the full heading chain to prepend to chunk text.
+        
+        Always uses the heading stack (which reflects the full hierarchy).
+        Pending headings are a subset — the stack already includes them.
+        """
         if heading_stack:
-            level, txt = heading_stack[-1]
-            return '#' * level + ' ' + txt
+            return '\n\n'.join('#' * level + ' ' + txt for level, txt in heading_stack)
         return ''
 
     # Two-pass: first build (text, section) tuples, then chunk them
@@ -108,8 +108,8 @@ def import_file(
             heading_stack.append((level, _heading_text(para)))
             pending_headings.append(para)
         else:
-            # Body paragraph — attach pending headings and section breadcrumb
-            heading_block = '\n\n'.join(pending_headings) if pending_headings else _current_heading_block()
+            # Body paragraph — attach full heading chain and section breadcrumb
+            heading_block = _current_heading_block()
             section = _current_section()
             if heading_block:
                 full_text = heading_block + '\n\n' + para
