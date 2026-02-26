@@ -248,6 +248,17 @@ These are natural next steps if you want to improve retrieval quality:
   splitting, or semantic chunking (split on topic boundaries rather than
   fixed size).
 
+- **SQLite backend:** For new installations or simpler deployments, SQLite
+  would work well as an alternative to MongoDB — embeddings stored as BLOBs,
+  metadata as JSON text, same NumPy search. Zero daemon, single-file backup.
+  Could be added as a configurable backend option alongside MongoDB.
+
+- **mongot / Atlas Search:** MongoDB's `$vectorSearch` (via the mongot
+  companion process) would move similarity search into the database engine
+  itself, eliminating the need to load all embeddings into Python. Currently
+  requires MongoDB Atlas or Enterprise; if mongot becomes available for
+  Community Edition, it would be a significant upgrade for large corpora.
+
 None of these are necessary at small scale (<50K chunks), but they
 become worthwhile as your corpus grows or retrieval precision becomes
 critical.
