@@ -267,7 +267,7 @@ Edit `ragger_memory/config.py` or set environment variables:
 ## Database Schema
 
 ```javascript
-// MongoDB: ragger.memories
+// MongoDB: ragger.memories — simple memory (manually stored)
 {
   _id: ObjectId,
   text: "Reid prefers MacPorts over Homebrew",
@@ -278,7 +278,61 @@ Edit `ragger_memory/config.py` or set environment variables:
     category: "preference"
   }
 }
+
+// MongoDB: ragger.memories — imported document chunk
+{
+  _id: ObjectId,
+  text: "## Orchestral Score Arrangement\n\nBrass instruments are arranged under the woodwinds in orchestral scores: horns, trumpets, trombones, and tubas. Key signatures are often omitted for horns and trumpets, while trombone and tuba players read with key signatures.",
+  embedding: [0.012, -0.034, ...],  // 384-dim float array
+  timestamp: ISODate("2026-02-26"),
+  metadata: {
+    source: "The Study of Orchestration.md",
+    filename: "The Study of Orchestration.md",
+    title: "The Study of Orchestration",
+    chunk: 200,
+    total_chunks: 1023,
+    section: "Orchestral Score Arrangement"
+  }
+}
 ```
+
+Imported chunks include heading context prepended to the text (full heading
+chain from the document hierarchy) and a `section` breadcrumb using `»`
+separators for deeper nesting.
+
+## Query Logging
+
+Search queries are logged to a separate `query_log` collection for quality
+analysis. Each query records timing, result scores, and quality metrics.
+
+```javascript
+// MongoDB: ragger.query_log
+{
+  _id: ObjectId,
+  timestamp: ISODate("2026-02-26T20:22:39.343Z"),
+  query: "forScore metadata PDF fields",
+  limit: 3,
+  min_score: 0.0,
+  num_results: 3,
+  top_score: 0.6461,
+  score_gap: 0.0415,       // difference between #1 and #2 scores
+  below_threshold: false,   // true if top_score < 0.4
+  results: [
+    { chunk_id: "699f8b41...", score: 0.6461, source: "forScore | PDF Metadata.md", chunk_size: 415 },
+    { chunk_id: "699f8b41...", score: 0.6046, source: "forScore | File Types.md", chunk_size: 309 }
+  ],
+  timing: {
+    embedding_ms: 11.3,     // time to embed the query
+    search_ms: 0.3,         // time for cosine similarity
+    total_ms: 30.9,         // end-to-end
+    corpus_size: 735        // chunks searched
+  },
+  feedback: null            // reserved for manual relevance rating
+}
+```
+
+Query logging can be toggled via `QUERY_LOGGING_ENABLED` in `config.py`.
+Logging failures are caught silently — they never break search operations.
 
 ## License
 

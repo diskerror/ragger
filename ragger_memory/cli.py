@@ -191,6 +191,9 @@ Examples:
   # Import a file
   ragger.py --import-file MEMORY.md
   
+  # Import multiple files
+  ragger.py --import-file doc1.md doc2.md doc3.md
+  
   # Import with chunking
   ragger.py --import-file large_doc.txt --chunk-size 500
   
@@ -201,7 +204,7 @@ Examples:
     
     parser.add_argument('--store', type=str, help="Store a memory")
     parser.add_argument('--search', type=str, help="Search memories")
-    parser.add_argument('--import-file', type=str, help="Import a file")
+    parser.add_argument('--import-file', type=str, nargs='+', help="Import one or more files")
     parser.add_argument('--chunk-size', type=int, default=DEFAULT_CHUNK_SIZE, help=f"Max chars per chunk (default: {DEFAULT_CHUNK_SIZE})")
     parser.add_argument('--limit', type=int, default=DEFAULT_SEARCH_LIMIT, help=f"Max search results (default: {DEFAULT_SEARCH_LIMIT})")
     parser.add_argument('--min-score', type=float, default=DEFAULT_MIN_SCORE, help=f"Min similarity score (default: {DEFAULT_MIN_SCORE})")
@@ -248,16 +251,24 @@ Examples:
                 print(f"✓ Stored: {memory_id}")
             
             elif args.import_file:
-                import_file(memory, args.import_file, args.chunk_size)
+                for filepath in args.import_file:
+                    import_file(memory, filepath, args.chunk_size)
             
             elif args.search:
-                results = memory.search(args.search, args.limit, args.min_score)
+                search_result = memory.search(args.search, args.limit, args.min_score)
+                results = search_result["results"]
+                timing = search_result.get("timing", {})
                 print(f"\nFound {len(results)} results:\n")
                 for i, r in enumerate(results, 1):
                     print(f"{i}. [score: {r['score']:.3f}] {r['text'][:100]}...")
                     if r.get('metadata'):
                         print(f"   metadata: {r['metadata']}")
                     print()
+                if timing:
+                    print(f"Timing: embed {timing.get('embedding_ms', '?')}ms, "
+                          f"search {timing.get('search_ms', '?')}ms, "
+                          f"total {timing.get('total_ms', '?')}ms "
+                          f"({timing.get('corpus_size', '?')} chunks)")
             
             else:
                 parser.print_help()

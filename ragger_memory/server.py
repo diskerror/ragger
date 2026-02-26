@@ -53,12 +53,14 @@ class RaggerHandler(BaseHTTPRequestHandler):
                     return
                 limit = params.get('limit', 5)
                 min_score = params.get('min_score', 0.0)
-                results = _memory.search(query, limit, min_score)
+                search_result = _memory.search(query, limit, min_score)
+                results = search_result["results"]
+                timing = search_result.get("timing", {})
                 # Convert datetime to string for JSON
                 for r in results:
                     if r.get('timestamp'):
                         r['timestamp'] = r['timestamp'].isoformat()
-                self._respond(200, {"results": results})
+                self._respond(200, {"results": results, "timing": timing})
             
             elif self.path == '/count':
                 self._respond(200, {"count": _memory.count()})

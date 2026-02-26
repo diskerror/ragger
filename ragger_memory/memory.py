@@ -8,6 +8,7 @@ Works with any MongoDB version (including MacPorts 6.0).
 
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
@@ -17,8 +18,8 @@ from pymongo.errors import PyMongoError
 from sentence_transformers import SentenceTransformer
 
 from .config import (
-    MONGODB_URI, DB_NAME, COLLECTION_NAME,
-    EMBEDDING_MODEL, EMBEDDING_DIMENSIONS,
+    MONGODB_URI, DB_NAME, COLLECTION_NAME, QUERY_LOG_COLLECTION,
+    QUERY_LOGGING_ENABLED, EMBEDDING_MODEL, EMBEDDING_DIMENSIONS,
     MODEL_CACHE_DIR, MODEL_LOCAL_PATH
 )
 
@@ -56,6 +57,7 @@ class RaggerMemory:
             self.client.admin.command('ping')
             self.db = self.client[DB_NAME]
             self.collection = self.db[COLLECTION_NAME]
+            self.query_log = self.db[QUERY_LOG_COLLECTION]
             logger.info(f"Connected to MongoDB: {DB_NAME}.{COLLECTION_NAME}")
         except PyMongoError as e:
             logger.error(f"MongoDB connection failed: {e}")
@@ -92,6 +94,7 @@ class RaggerMemory:
             self.collection.create_index("timestamp")
             self.collection.create_index("metadata.source")
             self.collection.create_index("metadata.category")
+            self.query_log.create_index("timestamp")
             logger.info("MongoDB indexes ensured")
         except PyMongoError as e:
             logger.warning(f"Could not create indexes: {e}")
@@ -177,7 +180,7 @@ class RaggerMemory:
         query: str,
         limit: int = 5,
         min_score: float = 0.0
-    ) -> List[Dict[str, Any]]:
+    ) -> Dict[str, Any]:
         """
         Vector search for relevant memories using cosine similarity.
         
@@ -187,19 +190,25 @@ class RaggerMemory:
             min_score: Minimum similarity score (0.0-1.0)
         
         Returns:
-            List of matching memories with scores, sorted by relevance
+            Dict with 'results' list and 'timing' dict
         """
         try:
+            t_start = time.perf_counter()
+            
             ids, texts, embeddings, metadata, timestamps = self._load_embeddings()
             
             if len(ids) == 0:
                 logger.info("No memories stored yet")
-                return []
+                return {"results": [], "timing": {}}
             
             # Generate query embedding
+            t_embed_start = time.perf_counter()
             query_embedding = self.model.encode(query).astype(np.float32)
+            t_embed_end = time.perf_counter()
             
             # Cosine similarity: dot(q, E) / (|q| * |E|)
+            t_search_start = time.perf_counter()
+            
             # Normalize query vector
             query_norm = query_embedding / np.linalg.norm(query_embedding)
             
@@ -213,6 +222,7 @@ class RaggerMemory:
             
             # Rank and filter
             ranked_indices = np.argsort(similarities)[::-1][:limit]
+            t_search_end = time.perf_counter()
             
             results = []
             for idx in ranked_indices:
@@ -220,18 +230,91 @@ class RaggerMemory:
                 if score < min_score:
                     continue
                 results.append({
+                    "id": ids[idx],
                     "text": texts[idx],
                     "score": score,
                     "metadata": metadata[idx],
                     "timestamp": timestamps[idx]
                 })
             
-            logger.info(f"Search returned {len(results)} results")
-            return results
+            t_total = time.perf_counter()
+            
+            # Build timing info
+            embedding_ms = round((t_embed_end - t_embed_start) * 1000, 1)
+            search_ms = round((t_search_end - t_search_start) * 1000, 1)
+            total_ms = round((t_total - t_start) * 1000, 1)
+            
+            # Quality metrics
+            scores = [r["score"] for r in results]
+            top_score = scores[0] if scores else 0.0
+            score_gap = (scores[0] - scores[1]) if len(scores) >= 2 else 0.0
+            
+            timing = {
+                "embedding_ms": embedding_ms,
+                "search_ms": search_ms,
+                "total_ms": total_ms,
+                "corpus_size": len(ids)
+            }
+            
+            # Log the query (if enabled)
+            if QUERY_LOGGING_ENABLED:
+                self._log_query(
+                    query=query,
+                    results=results,
+                    timing=timing,
+                    top_score=top_score,
+                    score_gap=score_gap,
+                    limit=limit,
+                    min_score=min_score,
+                )
+            
+            logger.info(
+                f"Search returned {len(results)} results "
+                f"(embed: {embedding_ms}ms, search: {search_ms}ms, total: {total_ms}ms)"
+            )
+            return {"results": results, "timing": timing}
             
         except Exception as e:
             logger.error(f"Search failed: {e}")
             raise
+    
+    def _log_query(
+        self,
+        query: str,
+        results: List[Dict],
+        timing: Dict,
+        top_score: float,
+        score_gap: float,
+        limit: int,
+        min_score: float
+    ):
+        """Log a search query to the query_log collection"""
+        try:
+            log_entry = {
+                "timestamp": datetime.now(timezone.utc),
+                "query": query,
+                "limit": limit,
+                "min_score": min_score,
+                "num_results": len(results),
+                "top_score": round(top_score, 4),
+                "score_gap": round(score_gap, 4),
+                "below_threshold": top_score < 0.4,
+                "results": [
+                    {
+                        "chunk_id": r["id"],
+                        "score": round(r["score"], 4),
+                        "source": r["metadata"].get("source", ""),
+                        "chunk_size": len(r["text"])
+                    }
+                    for r in results
+                ],
+                "timing": timing,
+                "feedback": None
+            }
+            self.query_log.insert_one(log_entry)
+        except Exception as e:
+            # Don't let logging failures break search
+            logger.warning(f"Failed to log query: {e}")
     
     def count(self) -> int:
         """Return number of stored memories"""

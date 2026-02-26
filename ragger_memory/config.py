@@ -8,6 +8,8 @@ import os
 MONGODB_URI = "mongodb://localhost:27017/"
 DB_NAME = "ragger"
 COLLECTION_NAME = "memories"
+QUERY_LOG_COLLECTION = "query_log"
+QUERY_LOGGING_ENABLED = True  # Set False to disable query logging
 
 # Embedding model (local, no API key needed)
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # 384 dimensions, ~90MB
