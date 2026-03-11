@@ -1,147 +1,48 @@
 """
-RaggerMemory - MongoDB-based vector memory store
+RaggerMemory - Factory facade for backend-agnostic memory storage
 
-Stores text with embeddings in MongoDB. Performs vector similarity
-search in Python using NumPy (no mongot/Atlas Search required).
-Works with any MongoDB version (including MacPorts 6.0).
+Stores text with embeddings. Performs vector similarity search.
+Supports multiple backends (MongoDB, SQLite) via inheritance.
 """
 
 import logging
-import os
-import time
-from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+from typing import Optional, Dict, Any
 
-import numpy as np
-from pymongo import MongoClient, DESCENDING
-from pymongo.errors import PyMongoError
-from sentence_transformers import SentenceTransformer
-
-from .config import (
-    MONGODB_URI, DB_NAME, COLLECTION_NAME, QUERY_LOG_COLLECTION,
-    QUERY_LOGGING_ENABLED, EMBEDDING_MODEL, EMBEDDING_DIMENSIONS,
-    MODEL_CACHE_DIR, MODEL_LOCAL_PATH
-)
+from .embedding import Embedder
+from .config import STORAGE_ENGINE
 
 logger = logging.getLogger(__name__)
 
 
 class RaggerMemory:
-    """MongoDB-based memory store with Python vector search"""
+    """Factory facade — creates the right backend based on config"""
     
-    def __init__(self, uri: Optional[str] = None):
+    def __init__(self, uri: Optional[str] = None, engine: Optional[str] = None):
         """
-        Initialize memory store
+        Initialize memory store with appropriate backend
         
         Args:
-            uri: MongoDB connection URI (defaults to config.MONGODB_URI)
+            uri: Connection URI (MongoDB) or file path (SQLite).
+                 Defaults to the value in config for the chosen engine.
+            engine: Storage engine ("mongodb" or "sqlite").
+                    Defaults to config.STORAGE_ENGINE.
         """
-        self.uri = uri or MONGODB_URI
-        self.client = None
-        self.db = None
-        self.collection = None
-        self.model = None
+        self.engine = engine or STORAGE_ENGINE
         
-        # Cache for embeddings (avoids re-reading from MongoDB on every search)
-        self._embedding_cache = None
-        self._cache_count = 0
+        # Create embedder (shared across all backends)
+        embedder = Embedder()
         
-        self._connect()
-        self._load_model()
-        self._ensure_indexes()
-    
-    def _connect(self):
-        """Connect to MongoDB"""
-        try:
-            self.client = MongoClient(self.uri, serverSelectionTimeoutMS=5000)
-            self.client.admin.command('ping')
-            self.db = self.client[DB_NAME]
-            self.collection = self.db[COLLECTION_NAME]
-            self.query_log = self.db[QUERY_LOG_COLLECTION]
-            logger.info(f"Connected to MongoDB: {DB_NAME}.{COLLECTION_NAME}")
-        except PyMongoError as e:
-            logger.error(f"MongoDB connection failed: {e}")
-            raise
-    
-    def _load_model(self):
-        """Load sentence transformer model from local snapshot only (no network)"""
-        if not MODEL_LOCAL_PATH:
-            raise FileNotFoundError(
-                f"Model '{EMBEDDING_MODEL}' not found in {MODEL_CACHE_DIR}\n"
-                f"Run './ragger.py --update-model' to download it."
-            )
-        try:
-            # Force CPU — MPS (Metal) can throw I/O errors in background
-            # processes. CPU is fast enough for 384-dim embeddings.
-            self.model = SentenceTransformer(MODEL_LOCAL_PATH, device="cpu")
-            logger.info(f"Embedding model loaded: {EMBEDDING_MODEL} (cpu)")
-        except Exception as e:
-            logger.error(f"Failed to load embedding model from {MODEL_LOCAL_PATH}: {e}")
-            raise
-    
-    @staticmethod
-    def download_model():
-        """Download or update the embedding model from HuggingFace"""
-        logger.info(f"Downloading model: {EMBEDDING_MODEL}")
-        logger.info(f"Cache directory: {MODEL_CACHE_DIR}")
-        model = SentenceTransformer(EMBEDDING_MODEL, cache_folder=MODEL_CACHE_DIR)
-        logger.info(f"Model ready: {EMBEDDING_MODEL}")
-        return model
-    
-    def _ensure_indexes(self):
-        """Create MongoDB indexes for efficient querying"""
-        try:
-            self.collection.create_index("timestamp")
-            self.collection.create_index("metadata.source")
-            self.collection.create_index("metadata.category")
-            self.query_log.create_index("timestamp")
-            logger.info("MongoDB indexes ensured")
-        except PyMongoError as e:
-            logger.warning(f"Could not create indexes: {e}")
-    
-    def _invalidate_cache(self):
-        """Invalidate the embedding cache after writes"""
-        self._embedding_cache = None
-        self._cache_count = 0
-    
-    def _load_embeddings(self) -> tuple:
-        """
-        Load all embeddings from MongoDB into NumPy arrays for search.
-        Caches results until invalidated by a write.
-        
-        Returns:
-            (ids, texts, embeddings_matrix, metadata_list, timestamps)
-        """
-        doc_count = self.collection.estimated_document_count()
-        
-        if self._embedding_cache is not None and self._cache_count == doc_count:
-            return self._embedding_cache
-        
-        logger.info(f"Loading {doc_count} embeddings from MongoDB...")
-        
-        docs = list(self.collection.find(
-            {},
-            {"_id": 1, "text": 1, "embedding": 1, "metadata": 1, "timestamp": 1}
-        ))
-        
-        if not docs:
-            empty = ([], [], np.array([]), [], [])
-            self._embedding_cache = empty
-            self._cache_count = 0
-            return empty
-        
-        ids = [str(d["_id"]) for d in docs]
-        texts = [d["text"] for d in docs]
-        embeddings = np.array([d["embedding"] for d in docs], dtype=np.float32)
-        metadata = [d.get("metadata", {}) for d in docs]
-        timestamps = [d.get("timestamp") for d in docs]
-        
-        result = (ids, texts, embeddings, metadata, timestamps)
-        self._embedding_cache = result
-        self._cache_count = doc_count
-        
-        logger.info(f"Loaded {len(docs)} embeddings ({embeddings.nbytes / 1024:.0f} KB)")
-        return result
+        # Lazy-import the chosen backend to avoid pulling in optional deps
+        if self.engine == "mongodb":
+            from .backend.mongo import MongoBackend
+            self._backend = MongoBackend(embedder, uri)
+            logger.info("Using MongoDB backend")
+        elif self.engine == "sqlite":
+            from .backend.sqlite import SqliteBackend
+            self._backend = SqliteBackend(embedder, uri)
+            logger.info("Using SQLite backend")
+        else:
+            raise ValueError(f"Unknown storage engine: {self.engine}")
     
     def store(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> str:
         """
@@ -154,26 +55,7 @@ class RaggerMemory:
         Returns:
             Memory ID (str)
         """
-        try:
-            embedding = self.model.encode(text).tolist()
-            
-            doc = {
-                "text": text,
-                "embedding": embedding,
-                "timestamp": datetime.now(timezone.utc),
-                "metadata": metadata or {}
-            }
-            
-            result = self.collection.insert_one(doc)
-            self._invalidate_cache()
-            
-            memory_id = str(result.inserted_id)
-            logger.info(f"Stored memory: {memory_id}")
-            return memory_id
-            
-        except Exception as e:
-            logger.error(f"Failed to store memory: {e}")
-            raise
+        return self._backend.store(text, metadata)
     
     def search(
         self,
@@ -192,139 +74,20 @@ class RaggerMemory:
         Returns:
             Dict with 'results' list and 'timing' dict
         """
-        try:
-            t_start = time.perf_counter()
-            
-            ids, texts, embeddings, metadata, timestamps = self._load_embeddings()
-            
-            if len(ids) == 0:
-                logger.info("No memories stored yet")
-                return {"results": [], "timing": {}}
-            
-            # Generate query embedding
-            t_embed_start = time.perf_counter()
-            query_embedding = self.model.encode(query).astype(np.float32)
-            t_embed_end = time.perf_counter()
-            
-            # Cosine similarity: dot(q, E) / (|q| * |E|)
-            t_search_start = time.perf_counter()
-            
-            # Normalize query vector
-            query_norm = query_embedding / np.linalg.norm(query_embedding)
-            
-            # Normalize all stored embeddings
-            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-            norms[norms == 0] = 1  # avoid division by zero
-            embeddings_norm = embeddings / norms
-            
-            # Compute similarities (matrix-vector multiply)
-            similarities = embeddings_norm @ query_norm
-            
-            # Rank and filter
-            ranked_indices = np.argsort(similarities)[::-1][:limit]
-            t_search_end = time.perf_counter()
-            
-            results = []
-            for idx in ranked_indices:
-                score = float(similarities[idx])
-                if score < min_score:
-                    continue
-                results.append({
-                    "id": ids[idx],
-                    "text": texts[idx],
-                    "score": score,
-                    "metadata": metadata[idx],
-                    "timestamp": timestamps[idx]
-                })
-            
-            t_total = time.perf_counter()
-            
-            # Build timing info
-            embedding_ms = round((t_embed_end - t_embed_start) * 1000, 1)
-            search_ms = round((t_search_end - t_search_start) * 1000, 1)
-            total_ms = round((t_total - t_start) * 1000, 1)
-            
-            # Quality metrics
-            scores = [r["score"] for r in results]
-            top_score = scores[0] if scores else 0.0
-            score_gap = (scores[0] - scores[1]) if len(scores) >= 2 else 0.0
-            
-            timing = {
-                "embedding_ms": embedding_ms,
-                "search_ms": search_ms,
-                "total_ms": total_ms,
-                "corpus_size": len(ids)
-            }
-            
-            # Log the query (if enabled)
-            if QUERY_LOGGING_ENABLED:
-                self._log_query(
-                    query=query,
-                    results=results,
-                    timing=timing,
-                    top_score=top_score,
-                    score_gap=score_gap,
-                    limit=limit,
-                    min_score=min_score,
-                )
-            
-            logger.info(
-                f"Search returned {len(results)} results "
-                f"(embed: {embedding_ms}ms, search: {search_ms}ms, total: {total_ms}ms)"
-            )
-            return {"results": results, "timing": timing}
-            
-        except Exception as e:
-            logger.error(f"Search failed: {e}")
-            raise
-    
-    def _log_query(
-        self,
-        query: str,
-        results: List[Dict],
-        timing: Dict,
-        top_score: float,
-        score_gap: float,
-        limit: int,
-        min_score: float
-    ):
-        """Log a search query to the query_log collection"""
-        try:
-            log_entry = {
-                "timestamp": datetime.now(timezone.utc),
-                "query": query,
-                "limit": limit,
-                "min_score": min_score,
-                "num_results": len(results),
-                "top_score": round(top_score, 4),
-                "score_gap": round(score_gap, 4),
-                "below_threshold": top_score < 0.4,
-                "results": [
-                    {
-                        "chunk_id": r["id"],
-                        "score": round(r["score"], 4),
-                        "source": r["metadata"].get("source", ""),
-                        "chunk_size": len(r["text"])
-                    }
-                    for r in results
-                ],
-                "timing": timing,
-                "feedback": None
-            }
-            self.query_log.insert_one(log_entry)
-        except Exception as e:
-            # Don't let logging failures break search
-            logger.warning(f"Failed to log query: {e}")
+        return self._backend.search(query, limit, min_score)
     
     def count(self) -> int:
         """Return number of stored memories"""
-        return self.collection.estimated_document_count()
+        return self._backend.count()
     
     def close(self):
-        """Close MongoDB connection"""
-        if self.client:
-            self.client.close()
-            logger.info("MongoDB connection closed")
+        """Close backend connection"""
+        self._backend.close()
+    
+    @staticmethod
+    def download_model():
+        """Download or update the embedding model from HuggingFace"""
+        return Embedder.download_model()
     
     def __enter__(self):
         return self

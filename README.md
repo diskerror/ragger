@@ -1,7 +1,8 @@
 # Ragger Memory
 
-MongoDB-based semantic memory store with local embeddings. Designed as a
-long-term memory backend for AI agents (OpenClaw, etc.) but usable standalone.
+Semantic memory store with local embeddings and pluggable storage backends.
+Designed as a long-term memory backend for AI agents (OpenClaw, etc.) but
+usable standalone.
 
 No external APIs, no cloud services — everything runs locally.
 
@@ -9,17 +10,19 @@ No external APIs, no cloud services — everything runs locally.
 
 - **Local embeddings** — `all-MiniLM-L6-v2` via sentence-transformers (384-dim, ~90MB)
 - **Fast vector search** — NumPy cosine similarity (~10-50ms for 50K documents)
-- **MongoDB storage** — Flexible document schema with metadata and timestamps
+- **Pluggable backends** — MongoDB or SQLite (easy to add more)
 - **HTTP server** — REST API on localhost for tool integration
 - **MCP server** — JSON-RPC over stdin/stdout (Model Context Protocol)
 - **CLI tools** — Store, search, import files, count memories
 - **Python API** — Reusable `RaggerMemory` class
+- **Query logging** — Track searches with timing, scores, and quality metrics
 
 ## Requirements
 
 - Python 3.10+
-- MongoDB 6+ (running locally, no auth required)
 - ~1GB disk for model + dependencies
+- **MongoDB backend:** MongoDB 6+ (running locally, no auth required)
+- **SQLite backend:** No extra dependencies (uses Python stdlib)
 
 ## Setup
 
@@ -35,11 +38,20 @@ pip install -r requirements.txt
 First run downloads the embedding model (~90MB) to your HuggingFace cache.
 After that, all operations are offline.
 
-### 2. Verify MongoDB is running
+### 2. Choose a storage backend
 
+Edit `ragger_memory/config.py`:
+
+```python
+STORAGE_ENGINE = "mongodb"  # or "sqlite"
+```
+
+**MongoDB** — requires a running `mongod` instance:
 ```bash
 mongosh --eval "db.runCommand({ping:1})"
 ```
+
+**SQLite** — zero setup, single-file database at `~/.local/share/ragger/memories.db`.
 
 ### 3. Test
 
@@ -79,16 +91,17 @@ and other binary formats, convert to text first with a tool like
 
 **File size:** No practical limit when using `--chunk-size` — files are
 split at paragraph boundaries (`\n\n`) and stored as separate documents.
-Without chunking, each file becomes one MongoDB document (16MB max). For
-anything longer than a page or two, use `--chunk-size`.
+Without chunking, each file becomes one document. For anything longer than
+a page or two, use `--chunk-size`.
 
 **Chunk size:** Smaller chunks (~300-500 chars, roughly one paragraph)
 produce better search results — the embedding captures a focused idea
 rather than a diluted page. Default is 500. Going much smaller risks
 losing context (pronouns without antecedents, etc.).
 
-```bash
+### HTTP Server
 
+```bash
 # Run HTTP server (for OpenClaw plugin or any HTTP client)
 ./ragger.py --server              # default: localhost:8432
 ./ragger.py --server --port 9000  # custom port
@@ -97,7 +110,7 @@ losing context (pronouns without antecedents, etc.).
 ./ragger.py --mcp
 ```
 
-### HTTP Server Endpoints
+#### Endpoints
 
 ```
 GET  /health  — {"status": "ok", "memories": 42}
@@ -181,22 +194,46 @@ messages are stored automatically after conversations.
 
 ```
 Ragger/
-├── ragger_memory/          # Python package
-│   ├── __init__.py         # Package exports
-│   ├── config.py           # Configuration (MongoDB URI, model, defaults)
-│   ├── memory.py           # RaggerMemory class (store, search, embeddings)
-│   ├── server.py           # HTTP server
-│   ├── mcp_server.py       # MCP JSON-RPC server
-│   └── cli.py              # Command-line interface
-├── ragger.py               # Entry point (chmod +x)
-├── requirements.txt        # Python dependencies
+├── ragger_memory/              # Python package
+│   ├── __init__.py             # Package exports
+│   ├── config.py               # Configuration (engine, URIs, model, defaults)
+│   ├── embedding.py            # Embedder class (sentence-transformers)
+│   ├── memory.py               # RaggerMemory facade/factory (lazy backend import)
+│   ├── server.py               # HTTP server
+│   ├── mcp_server.py           # MCP JSON-RPC server
+│   ├── cli.py                  # Command-line interface
+│   └── backend/                # Storage backends
+│       ├── __init__.py
+│       ├── base.py             # MemoryBackend ABC (NumPy cosine similarity)
+│       ├── mongo.py            # MongoBackend (MongoDB)
+│       └── sqlite.py           # SqliteBackend (SQLite)
+├── ragger.py                   # Entry point (chmod +x)
+├── requirements.txt            # Python dependencies
 └── README.md
 ```
 
+### Backend Architecture
+
+Storage backends inherit from `MemoryBackend` (in `backend/base.py`), which
+provides the default NumPy-based cosine similarity search. Each backend
+implements:
+
+- `store()` — Persist a document with text, embedding, and metadata
+- `get_all_embeddings()` — Load all embeddings for brute-force search
+- `count()` — Return the number of stored documents
+- `log_query()` — Record search queries for quality analysis
+
+The base class handles search via `get_all_embeddings()` + NumPy cosine
+similarity. Backends can override `search()` if they support native vector
+search (e.g., MongoDB Atlas `$vectorSearch`).
+
+Adding a new backend (Qdrant, Pinecone, etc.) requires implementing these
+four methods and adding a config section in `config.py`.
+
 ## How It Works
 
-1. **Store:** Text → 384-dim vector via sentence-transformers → MongoDB document
-   with text, embedding, metadata, and timestamp.
+1. **Store:** Text → 384-dim vector via sentence-transformers → backend
+   document with text, embedding, metadata, and timestamp.
 
 2. **Search:** Query → vector → NumPy cosine similarity against all stored
    embeddings → results ranked by score.
@@ -211,7 +248,7 @@ naive or vanilla RAG) — the simplest effective RAG pattern:
 
 1. **Indexing:** Documents are split into paragraph-sized chunks, each
    embedded into a 384-dimensional vector using a local sentence-transformer
-   model, then stored in MongoDB alongside the original text and metadata.
+   model, then stored alongside the original text and metadata.
 
 2. **Retrieval:** At query time, the query is embedded with the same model.
    Cosine similarity is computed against all stored embeddings using NumPy,
@@ -232,8 +269,8 @@ These are natural next steps if you want to improve retrieval quality:
 
 - **Hybrid search (BM25 + vector):** Combine keyword matching with semantic
   similarity. Helps when exact terms matter (names, model numbers, error
-  codes). Implementations: add a text index in MongoDB and merge scores, or
-  use a library like [rank-bm25](https://github.com/dorianbrown/rank_bm25).
+  codes). Implementations: add a text index and merge scores, or use a
+  library like [rank-bm25](https://github.com/dorianbrown/rank_bm25).
 
 - **Re-ranking:** After retrieving top-k candidates with fast vector search,
   re-score them with a cross-encoder model (e.g. `cross-encoder/ms-marco-MiniLM-L-6-v2`)
@@ -248,16 +285,10 @@ These are natural next steps if you want to improve retrieval quality:
   splitting, or semantic chunking (split on topic boundaries rather than
   fixed size).
 
-- **SQLite backend:** For new installations or simpler deployments, SQLite
-  would work well as an alternative to MongoDB — embeddings stored as BLOBs,
-  metadata as JSON text, same NumPy search. Zero daemon, single-file backup.
-  Could be added as a configurable backend option alongside MongoDB.
-
-- **mongot / Atlas Search:** MongoDB's `$vectorSearch` (via the mongot
-  companion process) would move similarity search into the database engine
-  itself, eliminating the need to load all embeddings into Python. Currently
-  requires MongoDB Atlas or Enterprise; if mongot becomes available for
-  Community Edition, it would be a significant upgrade for large corpora.
+- **Native vector search:** MongoDB's `$vectorSearch` (via mongot) or
+  purpose-built vector databases (Qdrant, etc.) would move similarity
+  search into the database engine, eliminating the need to load all
+  embeddings into Python. Worthwhile for very large corpora (100K+).
 
 None of these are necessary at small scale (<50K chunks), but they
 become worthwhile as your corpus grows or retrieval precision becomes
@@ -269,16 +300,21 @@ Edit `ragger_memory/config.py` or set environment variables:
 
 | Setting | Default | Env Var |
 |---------|---------|---------|
+| Storage engine | `mongodb` | — |
 | MongoDB URI | `mongodb://localhost:27017/` | — |
-| Database | `ragger` | — |
-| Collection | `memories` | — |
-| Model | `all-MiniLM-L6-v2` | — |
+| MongoDB database | `ragger` | — |
+| MongoDB collection | `memories` | — |
+| SQLite path | `~/.local/share/ragger/memories.db` | — |
+| Embedding model | `all-MiniLM-L6-v2` | — |
 | HF cache | `~/.cache/huggingface` | `SENTENCE_TRANSFORMERS_HOME` |
+| Query logging | `True` | — |
 
 ## Database Schema
 
+### MongoDB
+
 ```javascript
-// MongoDB: ragger.memories — simple memory (manually stored)
+// ragger.memories
 {
   _id: ObjectId,
   text: "Reid prefers MacPorts over Homebrew",
@@ -289,35 +325,31 @@ Edit `ragger_memory/config.py` or set environment variables:
     category: "preference"
   }
 }
-
-// MongoDB: ragger.memories — imported document chunk
-{
-  _id: ObjectId,
-  text: "## Orchestral Score Arrangement\n\nBrass instruments are arranged under the woodwinds in orchestral scores: horns, trumpets, trombones, and tubas. Key signatures are often omitted for horns and trumpets, while trombone and tuba players read with key signatures.",
-  embedding: [0.012, -0.034, ...],  // 384-dim float array
-  timestamp: ISODate("2026-02-26"),
-  metadata: {
-    source: "The Study of Orchestration.md",
-    filename: "The Study of Orchestration.md",
-    title: "The Study of Orchestration",
-    chunk: 200,
-    total_chunks: 1023,
-    section: "Orchestral Score Arrangement"
-  }
-}
 ```
 
-Imported chunks include heading context prepended to the text (full heading
-chain from the document hierarchy) and a `section` breadcrumb using `»`
-separators for deeper nesting.
+### SQLite
+
+```sql
+CREATE TABLE memories (
+    id          TEXT PRIMARY KEY,  -- UUID
+    text        TEXT NOT NULL,
+    embedding   BLOB NOT NULL,    -- 384 × float32 = 1536 bytes
+    timestamp   TEXT NOT NULL,     -- ISO 8601
+    metadata    TEXT              -- JSON
+);
+```
+
+Imported document chunks include heading context prepended to the text
+(full heading chain from the document hierarchy) and a `section` breadcrumb
+using `»` separators for deeper nesting.
 
 ## Query Logging
 
-Search queries are logged to a separate `query_log` collection for quality
+Search queries are logged to a separate collection/table for quality
 analysis. Each query records timing, result scores, and quality metrics.
 
 ```javascript
-// MongoDB: ragger.query_log
+// MongoDB: ragger.query_log (SQLite: query_log table)
 {
   _id: ObjectId,
   timestamp: ISODate("2026-02-26T20:22:39.343Z"),
@@ -347,4 +379,4 @@ Logging failures are caught silently — they never break search operations.
 
 ## License
 
-MIT
+GPL v3 — See [LICENSE](LICENSE) for details.

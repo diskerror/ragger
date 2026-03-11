@@ -16,6 +16,85 @@ from .config import DEFAULT_SEARCH_LIMIT, DEFAULT_MIN_SCORE, DEFAULT_CHUNK_SIZE
 
 logger = logging.getLogger(__name__)
 
+VALID_ENGINES = ("mongodb", "sqlite")
+
+
+def convert_backend(source_engine: str, dest_engine: str):
+    """
+    Copy all memories from one backend to another.
+    Embeddings are copied as-is (no re-encoding).
+
+    Args:
+        source_engine: Source backend name ("mongodb" or "sqlite")
+        dest_engine: Destination backend name ("mongodb" or "sqlite")
+    """
+    from .embedding import Embedder
+    from datetime import datetime
+
+    if source_engine == dest_engine:
+        print(f"Source and destination are the same ({source_engine}). Nothing to do.")
+        return
+
+    for eng in (source_engine, dest_engine):
+        if eng not in VALID_ENGINES:
+            print(f"Unknown engine: {eng}. Must be one of {VALID_ENGINES}")
+            return
+
+    # Shared embedder — needed by both backends but won't re-encode anything
+    embedder = Embedder()
+
+    # Open source
+    if source_engine == "mongodb":
+        from .backend.mongo import MongoBackend
+        source = MongoBackend(embedder)
+    else:
+        from .backend.sqlite import SqliteBackend
+        source = SqliteBackend(embedder)
+
+    # Open destination
+    if dest_engine == "mongodb":
+        from .backend.mongo import MongoBackend
+        dest = MongoBackend(embedder)
+    else:
+        from .backend.sqlite import SqliteBackend
+        dest = SqliteBackend(embedder)
+
+    src_count = source.count()
+    if src_count == 0:
+        print(f"Source ({source_engine}) is empty. Nothing to convert.")
+        source.close()
+        dest.close()
+        return
+
+    print(f"Converting {src_count} memories: {source_engine} → {dest_engine}")
+
+    ids, texts, embeddings, metadata_list, timestamps = source.load_all_embeddings()
+
+    copied = 0
+    for i in range(len(ids)):
+        # Normalize timestamp to datetime if it's a string
+        ts = timestamps[i]
+        if isinstance(ts, str):
+            ts = datetime.fromisoformat(ts)
+        elif ts is None:
+            from datetime import timezone
+            ts = datetime.now(timezone.utc)
+
+        dest.store_raw(
+            text=texts[i],
+            embedding=embeddings[i].tolist(),
+            metadata=metadata_list[i],
+            timestamp=ts
+        )
+        copied += 1
+        if copied % 500 == 0:
+            print(f"  {copied}/{src_count}...")
+
+    print(f"✓ Converted {copied} memories from {source_engine} to {dest_engine}")
+
+    source.close()
+    dest.close()
+
 
 def import_file(
     memory: RaggerMemory,
@@ -199,6 +278,9 @@ Examples:
   
   # Run as MCP server for OpenClaw
   ragger.py --mcp
+  
+  # Convert all memories from MongoDB to SQLite
+  ragger.py --convert mongodb sqlite
         """
     )
     
@@ -212,6 +294,8 @@ Examples:
     parser.add_argument('--server', action='store_true', help="Run HTTP server")
     parser.add_argument('--port', type=int, default=DEFAULT_PORT, help=f"HTTP server port (default: {DEFAULT_PORT})")
     parser.add_argument('--update-model', action='store_true', help="Download or update the embedding model")
+    parser.add_argument('--convert', nargs=2, metavar=('FROM', 'TO'),
+                        help="Convert memories between backends (e.g. --convert mongodb sqlite)")
     parser.add_argument('--mcp', action='store_true', help="Run as MCP server (JSON-RPC over stdin/stdout)")
     parser.add_argument('--verbose', '-v', action='store_true', help="Verbose logging")
     
@@ -237,6 +321,10 @@ Examples:
         run_server(args.port)
         return
     
+    if args.convert:
+        convert_backend(args.convert[0], args.convert[1])
+        return
+
     if args.mcp:
         run_mcp_server()
     else:
