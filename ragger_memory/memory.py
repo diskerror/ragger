@@ -6,7 +6,7 @@ Supports multiple backends (MongoDB, SQLite) via inheritance.
 """
 
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from .embedding import Embedder
 from .config import STORAGE_ENGINE
@@ -61,7 +61,8 @@ class RaggerMemory:
         self,
         query: str,
         limit: int = 5,
-        min_score: float = 0.0
+        min_score: float = 0.0,
+        collections: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Vector search for relevant memories using cosine similarity.
@@ -70,11 +71,13 @@ class RaggerMemory:
             query: Search query text
             limit: Maximum results to return
             min_score: Minimum similarity score (0.0-1.0)
+            collections: Collections to search. None = ["memory"].
+                         Use ["*"] to search all collections.
         
         Returns:
             Dict with 'results' list and 'timing' dict
         """
-        return self._backend.search(query, limit, min_score)
+        return self._backend.search(query, limit, min_score, collections)
     
     def count(self) -> int:
         """Return number of stored memories"""

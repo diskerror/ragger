@@ -41,9 +41,10 @@ def run_mcp_server():
                 query = params.get('query')
                 limit = params.get('limit', 5)
                 min_score = params.get('min_score', 0.0)
+                collections = params.get('collections', None)
                 if not query:
                     raise ValueError("query parameter required")
-                results = memory.search(query, limit, min_score)
+                results = memory.search(query, limit, min_score, collections)
                 result = {"results": results}
             
             else:

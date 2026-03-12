@@ -42,7 +42,10 @@ class RaggerHandler(BaseHTTPRequestHandler):
                 if not text:
                     self._respond(400, {"error": "text required"})
                     return
-                metadata = params.get('metadata')
+                metadata = params.get('metadata') or {}
+                # Default collection to "memory" if not specified
+                if 'collection' not in metadata:
+                    metadata['collection'] = 'memory'
                 memory_id = _memory.store(text, metadata)
                 self._respond(200, {"id": memory_id, "status": "stored"})
             
@@ -53,7 +56,8 @@ class RaggerHandler(BaseHTTPRequestHandler):
                     return
                 limit = params.get('limit', 5)
                 min_score = params.get('min_score', 0.0)
-                search_result = _memory.search(query, limit, min_score)
+                collections = params.get('collections', None)
+                search_result = _memory.search(query, limit, min_score, collections)
                 results = search_result["results"]
                 timing = search_result.get("timing", {})
                 # Convert datetime to string for JSON (if not already converted by backend)

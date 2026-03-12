@@ -13,6 +13,7 @@ No external APIs, no cloud services — everything runs locally.
 - **Pluggable backends** — MongoDB or SQLite (easy to add more)
 - **HTTP server** — REST API on localhost for tool integration
 - **MCP server** — JSON-RPC over stdin/stdout (Model Context Protocol)
+- **Collection filtering** — Organize memories into searchable collections (e.g. `music`, `sibelius`, `memory`)
 - **CLI tools** — Store, search, import files, count memories
 - **Python API** — Reusable `RaggerMemory` class
 - **Query logging** — Track searches with timing, scores, and quality metrics
@@ -43,7 +44,7 @@ After that, all operations are offline.
 Edit `ragger_memory/config.py`:
 
 ```python
-STORAGE_ENGINE = "mongodb"  # or "sqlite"
+STORAGE_ENGINE = "sqlite"  # or "mongodb"
 ```
 
 **MongoDB** — requires a running `mongod` instance:
@@ -72,8 +73,16 @@ mongosh --eval "db.runCommand({ping:1})"
 # Search (semantic — finds by meaning, not keywords)
 ./ragger.py --search "package manager preferences"
 
+# Search specific collections
+./ragger.py --search "transposition" --collections sibelius
+./ragger.py --search "instrument ranges" --collections music sibelius
+./ragger.py --search "anything" --collections '*'  # all collections
+
 # Import a text file (paragraph-aware chunking)
 ./ragger.py --import-file notes.md --chunk-size 500
+
+# Import into a specific collection
+./ragger.py --import-file sibelius-manual.md --collection sibelius
 
 # Import a converted PDF (use docling, pandoc, etc. to get text first)
 # docling myfile.pdf --to md -o .
@@ -116,8 +125,13 @@ losing context (pronouns without antecedents, etc.).
 GET  /health  — {"status": "ok", "memories": 42}
 GET  /count   — {"count": 42}
 POST /store   — {"text": "...", "metadata": {...}}  →  {"id": "...", "status": "stored"}
-POST /search  — {"query": "...", "limit": 5, "min_score": 0.0}  →  {"results": [...]}
+POST /search  — {"query": "...", "limit": 5, "min_score": 0.0, "collections": ["memory"]}
+             →  {"results": [...], "timing": {...}}
 ```
+
+The `collections` parameter filters which memory pools to search. Omit it
+to search only the default `memory` collection. Pass `["*"]` to search
+everything.
 
 ### Python API
 
@@ -189,6 +203,74 @@ This gives the agent three tools:
 With `autoRecall` enabled, relevant memories are automatically injected
 into context before each agent turn. With `autoCapture`, important user
 messages are stored automatically after conversations.
+
+## Collections
+
+Memories are organized into **collections** — logical groups that let you
+separate reference material from conversation memories and search the
+right pool for the right question.
+
+### Built-in Collections
+
+| Collection | Purpose |
+|------------|---------|
+| `memory` | Conversation memories, agent notes, decisions (default) |
+
+### Example Custom Collections
+
+| Collection | Purpose |
+|------------|---------|
+| `music` | Orchestration references, instrument ranges |
+| `sibelius` | Sibelius software documentation |
+| `forscore` | forScore app documentation |
+| `travel` | Flight info, hotel bookings, visa docs |
+
+### How It Works
+
+Every memory has a `collection` field in its metadata. When you search,
+you specify which collections to include:
+
+- **Default (no `collections` param):** Only searches `memory` — your
+  conversation memories and agent-stored notes.
+- **Specific collections:** `--collections sibelius music` searches both.
+- **Everything:** `--collections '*'` searches all collections.
+
+This prevents reference documents (manuals, textbooks) from drowning out
+your actual memories in general searches, while still making them available
+when you need them.
+
+### Tagging at Import
+
+```bash
+# Import reference docs into a named collection
+./ragger.py --import-file orchestration-guide.md --collection music
+
+# Import without --collection → defaults to "memory"
+./ragger.py --import-file meeting-notes.md
+```
+
+### Working with Your AI
+
+The real power of collections shows up when an AI agent uses Ragger as
+its memory backend. The agent learns what you're working on from context
+and searches the right collections automatically:
+
+- Working on orchestration? The agent includes `music` in its search.
+- Asking about Sibelius shortcuts? It searches `sibelius`.
+- General conversation? Just `memory` — no noise from reference docs.
+
+You don't need to tell the agent which collection to use. It figures it
+out the same way a good assistant would — by paying attention.
+
+**To customize this for your setup:** Work with your AI to define
+collections that match your workflow. Import your reference materials
+with `--collection <name>`, and let the agent know what's available.
+The agent can then decide which bookshelves to pull from based on what
+you're discussing.
+
+This is a collaborative process — your AI learns your collections over
+time and gets better at knowing when to reach for reference material
+versus conversation history.
 
 ## Project Structure
 
@@ -300,7 +382,7 @@ Edit `ragger_memory/config.py` or set environment variables:
 
 | Setting | Default | Env Var |
 |---------|---------|---------|
-| Storage engine | `mongodb` | — |
+| Storage engine | `sqlite` | — |
 | MongoDB URI | `mongodb://localhost:27017/` | — |
 | MongoDB database | `ragger` | — |
 | MongoDB collection | `memories` | — |
@@ -331,11 +413,11 @@ Edit `ragger_memory/config.py` or set environment variables:
 
 ```sql
 CREATE TABLE memories (
-    id          TEXT PRIMARY KEY,  -- UUID
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
     text        TEXT NOT NULL,
     embedding   BLOB NOT NULL,    -- 384 × float32 = 1536 bytes
     timestamp   TEXT NOT NULL,     -- ISO 8601
-    metadata    TEXT              -- JSON
+    metadata    TEXT              -- JSON (includes "collection" field)
 );
 ```
 

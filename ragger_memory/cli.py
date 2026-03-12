@@ -288,6 +288,8 @@ Examples:
     parser.add_argument('--search', type=str, help="Search memories")
     parser.add_argument('--import-file', type=str, nargs='+', help="Import one or more files")
     parser.add_argument('--chunk-size', type=int, default=DEFAULT_CHUNK_SIZE, help=f"Max chars per chunk (default: {DEFAULT_CHUNK_SIZE})")
+    parser.add_argument('--collection', type=str, default=None, help="Collection name for import or search (e.g. music, sibelius, forscore, memory)")
+    parser.add_argument('--collections', type=str, nargs='+', default=None, help="Collections to search (default: memory only; use '*' for all)")
     parser.add_argument('--limit', type=int, default=DEFAULT_SEARCH_LIMIT, help=f"Max search results (default: {DEFAULT_SEARCH_LIMIT})")
     parser.add_argument('--min-score', type=float, default=DEFAULT_MIN_SCORE, help=f"Min similarity score (default: {DEFAULT_MIN_SCORE})")
     parser.add_argument('--count', action='store_true', help="Show number of stored memories")
@@ -339,11 +341,17 @@ Examples:
                 print(f"✓ Stored: {memory_id}")
             
             elif args.import_file:
+                import_meta = {}
+                if args.collection:
+                    import_meta['collection'] = args.collection
                 for filepath in args.import_file:
-                    import_file(memory, filepath, args.chunk_size)
+                    import_file(memory, filepath, args.chunk_size, import_meta if import_meta else None)
             
             elif args.search:
-                search_result = memory.search(args.search, args.limit, args.min_score)
+                collections = args.collections or (
+                    [args.collection] if args.collection else None
+                )
+                search_result = memory.search(args.search, args.limit, args.min_score, collections)
                 results = search_result["results"]
                 timing = search_result.get("timing", {})
                 print(f"\nFound {len(results)} results:\n")

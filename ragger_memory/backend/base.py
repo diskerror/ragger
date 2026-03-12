@@ -134,7 +134,8 @@ class MemoryBackend(ABC):
         self,
         query: str,
         limit: int = 5,
-        min_score: float = 0.0
+        min_score: float = 0.0,
+        collections: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Default NumPy brute-force vector search using cosine similarity.
@@ -144,6 +145,8 @@ class MemoryBackend(ABC):
             query: Search query text
             limit: Maximum results to return
             min_score: Minimum similarity score (0.0-1.0)
+            collections: List of collections to search. None = ["memory"] (default).
+                         Use ["*"] or ["all"] to search everything.
         
         Returns:
             Dict with 'results' list and 'timing' dict
@@ -157,6 +160,30 @@ class MemoryBackend(ABC):
                 logger.info("No memories stored yet")
                 return {"results": [], "timing": {}}
             
+            # Filter by collection
+            if collections and "*" not in collections and "all" not in collections:
+                mask = np.array([
+                    m.get("collection", "memory") in collections
+                    for m in metadata
+                ], dtype=bool)
+            else:
+                # Default: only "memory" collection
+                if collections is None:
+                    mask = np.array([
+                        m.get("collection", "memory") == "memory"
+                        for m in metadata
+                    ], dtype=bool)
+                else:
+                    mask = np.ones(len(ids), dtype=bool)
+            
+            if not mask.any():
+                logger.info(f"No memories in collections {collections}")
+                return {"results": [], "timing": {"corpus_size": len(ids), "filtered_size": 0}}
+            
+            # Apply mask to get filtered indices
+            filtered_indices = np.where(mask)[0]
+            filtered_embeddings = embeddings[filtered_indices]
+            
             # Generate query embedding
             t_embed_start = time.perf_counter()
             query_embedding = self.embedder.encode(query).astype(np.float32)
@@ -168,21 +195,25 @@ class MemoryBackend(ABC):
             # Normalize query vector
             query_norm = query_embedding / np.linalg.norm(query_embedding)
             
-            # Normalize all stored embeddings
-            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+            # Normalize filtered embeddings
+            norms = np.linalg.norm(filtered_embeddings, axis=1, keepdims=True)
             norms[norms == 0] = 1  # avoid division by zero
-            embeddings_norm = embeddings / norms
+            embeddings_norm = filtered_embeddings / norms
             
             # Compute similarities (matrix-vector multiply)
             similarities = embeddings_norm @ query_norm
             
-            # Rank and filter
-            ranked_indices = np.argsort(similarities)[::-1][:limit]
+            # Rank and filter — get top results from filtered set
+            top_k = min(limit, len(similarities))
+            ranked_local = np.argsort(similarities)[::-1][:top_k]
+            # Map back to original indices
+            ranked_indices = filtered_indices[ranked_local]
+            ranked_scores = similarities[ranked_local]
             t_search_end = time.perf_counter()
             
             results = []
-            for idx in ranked_indices:
-                score = float(similarities[idx])
+            for i, idx in enumerate(ranked_indices):
+                score = float(ranked_scores[i])
                 if score < min_score:
                     continue
                 
@@ -210,7 +241,8 @@ class MemoryBackend(ABC):
                 "embedding_ms": embedding_ms,
                 "search_ms": search_ms,
                 "total_ms": total_ms,
-                "corpus_size": len(ids)
+                "corpus_size": len(ids),
+                "filtered_size": int(mask.sum())
             }
             
             # Log the query (if enabled)
