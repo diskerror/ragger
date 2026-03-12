@@ -30,5 +30,5 @@ MODEL_CACHE_DIR = os.environ.get(
 
 # --- Search defaults ---
 DEFAULT_SEARCH_LIMIT = 5
-DEFAULT_MIN_SCORE = 0.6
+DEFAULT_MIN_SCORE = 0.4
 DEFAULT_CHUNK_SIZE = 500  # characters per chunk

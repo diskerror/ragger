@@ -32,3 +32,5 @@ _old_*
 
 # Model cache (sentence-transformers downloads here)
 .cache/
+
+memories.db
