@@ -281,6 +281,15 @@ Examples:
   
   # Convert all memories from MongoDB to SQLite
   ragger.py --convert mongodb sqlite
+  
+  # Export documents back to files
+  ragger.py --export-docs music ./exported/music/
+  
+  # Export conversation memories
+  ragger.py --export-memories ./exported/memories/
+  
+  # Export everything
+  ragger.py --export-all ./exported/
         """
     )
     
@@ -298,6 +307,15 @@ Examples:
     parser.add_argument('--update-model', action='store_true', help="Download or update the embedding model")
     parser.add_argument('--convert', nargs=2, metavar=('FROM', 'TO'),
                         help="Convert memories between backends (e.g. --convert mongodb sqlite)")
+    parser.add_argument('--export-docs', nargs=2, metavar=('COLLECTION', 'DEST'),
+                        help="Export a document collection back to files")
+    parser.add_argument('--export-memories', type=str, metavar='DEST',
+                        help="Export conversation memories as markdown")
+    parser.add_argument('--export-all', type=str, metavar='DEST',
+                        help="Export everything (docs by collection, memories grouped)")
+    parser.add_argument('--group-by', type=str, default='date',
+                        choices=['date', 'category', 'collection'],
+                        help="Grouping for memory export (default: date)")
     parser.add_argument('--mcp', action='store_true', help="Run as MCP server (JSON-RPC over stdin/stdout)")
     parser.add_argument('--verbose', '-v', action='store_true', help="Verbose logging")
     
@@ -325,6 +343,21 @@ Examples:
     
     if args.convert:
         convert_backend(args.convert[0], args.convert[1])
+        return
+
+    if args.export_docs:
+        from .export import export_docs
+        export_docs(args.export_docs[0], args.export_docs[1])
+        return
+
+    if args.export_memories:
+        from .export import export_memories
+        export_memories(args.export_memories, args.group_by)
+        return
+
+    if args.export_all:
+        from .export import export_all
+        export_all(args.export_all, args.group_by)
         return
 
     if args.mcp:
