@@ -124,9 +124,14 @@ def import_file(
     # Keep relative image references as-is (e.g. O_artifacts/image_000007_00fb...png)
     # Path rewriting happens at query time, not import time — see TOOLS.md
 
+    # Collapse OCR multi-space artifacts to single space (per line, preserving structure)
+    lines = text.split('\n')
+    lines = [re.sub(r'  +', ' ', line) for line in lines]
+    text = '\n'.join(lines)
+
     text = re.sub(r'\n{3,}', '\n\n', text)  # collapse extra blank lines left behind
 
-    source_meta = {"source": str(path), "filename": path.name, "title": path.stem}
+    source_meta = {"source": str(path), "filename": path.name}
     if metadata:
         source_meta.update(metadata)
     
@@ -137,8 +142,8 @@ def import_file(
     #   - The current heading(s) prepended to the text (improves embeddings)
     #   - A "section" metadata field with the breadcrumb trail
     #
-    # Consecutive headings accumulate and attach to the next body paragraph.
-    # Every body paragraph under a heading inherits that heading context.
+    # Paragraphs are kept whole — never split mid-paragraph. Small consecutive
+    # paragraphs under the same heading are merged up to chunk_size.
 
     raw_paragraphs = text.split('\n\n')
 
@@ -164,7 +169,6 @@ def import_file(
         """Build the full heading chain to prepend to chunk text.
         
         Always uses the heading stack (which reflects the full hierarchy).
-        Pending headings are a subset — the stack already includes them.
         """
         if heading_stack:
             return '\n\n'.join('#' * level + ' ' + txt for level, txt in heading_stack)
@@ -203,40 +207,23 @@ def import_file(
         annotated.append(('\n\n'.join(pending_headings), section))
         pending_headings = []
 
-    # Now chunk the annotated paragraphs, preserving section metadata.
-    # When paragraphs are merged into one chunk, use the section from
-    # the first paragraph in the chunk.
+    # Chunk annotated paragraphs: merge small ones up to chunk_size,
+    # but NEVER split a paragraph. Oversized paragraphs become their own chunk.
     chunks: list[tuple[str, str]] = []  # (chunk_text, section)
     current = ""
     current_section = ""
 
     for full_text, section in annotated:
-        # If this paragraph alone exceeds chunk_size, split on sentences
-        if len(full_text) > chunk_size:
-            if current:
-                chunks.append((current.strip(), current_section))
-                current = ""
-                current_section = ""
-            # Split on sentence boundaries (. ! ? followed by space or end)
-            sentences = re.split(r'(?<=[.!?])\s+', full_text)
-            for sentence in sentences:
-                candidate = current + (' ' if current else '') + sentence
-                if len(candidate) > chunk_size and current:
-                    chunks.append((current.strip(), section))
-                    current = sentence
-                else:
-                    current = candidate
+        candidate = current + ('\n\n' if current else '') + full_text
+        if len(candidate) > chunk_size and current:
+            # Current buffer is full — flush it
+            chunks.append((current.strip(), current_section))
+            current = full_text
             current_section = section
         else:
-            candidate = current + ('\n\n' if current else '') + full_text
-            if len(candidate) > chunk_size and current:
-                chunks.append((current.strip(), current_section))
-                current = full_text
+            if not current:
                 current_section = section
-            else:
-                if not current:
-                    current_section = section
-                current = candidate
+            current = candidate
     if current.strip():
         chunks.append((current.strip(), current_section))
 

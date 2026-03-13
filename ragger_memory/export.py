@@ -126,8 +126,9 @@ def export_docs(collection: str, dest_dir: str, db_path: str = None):
                 if body:
                     output_parts.append(body)
         
-        # Join with double newlines
+        # Join with double newlines, then collapse any triple+ newlines
         content = '\n\n'.join(output_parts) + '\n'
+        content = re.sub(r'\n{3,}', '\n\n', content)
         
         out_path = dest / filename
         out_path.write_text(content)

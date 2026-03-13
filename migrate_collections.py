@@ -17,13 +17,13 @@ DB_PATH = "/Volumes/WDBlack2/.local/share/ragger/memories.db"
 
 # Map filename patterns to collections
 COLLECTION_MAP = {
-    # Music / orchestration
-    "Orchestration.md": "music",
-    "Principles of Orchestration": "music",
-    "The Study of Orchestration": "music",
-    "principlesoforch": "music",
-    "Range of Instruments": "music",
-    "O.md": "music",
+    # Orchestration
+    "Orchestration.md": "orchestration",
+    "Principles of Orchestration": "orchestration",
+    "The Study of Orchestration": "orchestration",
+    "principlesoforch": "orchestration",
+    "Range of Instruments": "orchestration",
+    "O.md": "orchestration",
     # Sibelius
     "Sibelius_Reference": "sibelius",
     "ManuScript_Language_Guide": "sibelius",
