@@ -46,4 +46,4 @@ MODEL_CACHE_DIR = os.environ.get(
 # --- Search defaults ---
 DEFAULT_SEARCH_LIMIT = 5
 DEFAULT_MIN_SCORE = 0.4
-MINIMUM_CHUNK_SIZE = 500  # merge short paragraphs until at least this size
+MINIMUM_CHUNK_SIZE = 300  # merge short paragraphs until at least this size
