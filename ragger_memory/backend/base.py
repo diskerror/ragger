@@ -14,7 +14,7 @@ import numpy as np
 import os
 
 from ..bm25 import BM25Index
-from ..config import QUERY_LOGGING_ENABLED, BM25_ENABLED, BM25_WEIGHT, VECTOR_WEIGHT, BM25_K1, BM25_B, NORMALIZE_HOME_PATH
+from ..config import QUERY_LOGGING_ENABLED, BM25_ENABLED, BM25_WEIGHT, VECTOR_WEIGHT, BM25_K1, BM25_B, NORMALIZE_HOME_PATH, DEFAULT_COLLECTION
 
 # Resolve actual home path once at import time (e.g. "/Volumes/WDBlack2")
 _HOME_DIR = os.path.expanduser("~")
@@ -191,7 +191,7 @@ class MemoryBackend(ABC):
             query: Search query text
             limit: Maximum results to return
             min_score: Minimum similarity score (0.0-1.0)
-            collections: List of collections to search. None = ["memory"] (default).
+            collections: List of collections to search. None = default collection only.
                          Use ["*"] or ["all"] to search everything.
         
         Returns:
@@ -209,14 +209,14 @@ class MemoryBackend(ABC):
             # Filter by collection
             if collections and "*" not in collections and "all" not in collections:
                 mask = np.array([
-                    m.get("collection", "memory") in collections
+                    m.get("collection", DEFAULT_COLLECTION) in collections
                     for m in metadata
                 ], dtype=bool)
             else:
-                # Default: only "memory" collection
+                # Default: only default collection
                 if collections is None:
                     mask = np.array([
-                        m.get("collection", "memory") == "memory"
+                        m.get("collection", DEFAULT_COLLECTION) == DEFAULT_COLLECTION
                         for m in metadata
                     ], dtype=bool)
                 else:

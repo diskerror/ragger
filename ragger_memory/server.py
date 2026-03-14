@@ -10,7 +10,7 @@ from .memory import RaggerMemory
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PORT = 8432
+from .config import DEFAULT_PORT
 
 # Module-level reference so the handler can access it
 _memory = None

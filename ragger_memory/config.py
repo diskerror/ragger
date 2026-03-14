@@ -43,7 +43,11 @@ MODEL_CACHE_DIR = os.environ.get(
     os.path.expanduser('~/.cache/huggingface')
 )
 
+# --- Server ---
+DEFAULT_PORT = 8432
+
 # --- Search defaults ---
 DEFAULT_SEARCH_LIMIT = 5
 DEFAULT_MIN_SCORE = 0.4
+DEFAULT_COLLECTION = "memory"  # default collection for search and untagged memories
 MINIMUM_CHUNK_SIZE = 300  # merge short paragraphs until at least this size
