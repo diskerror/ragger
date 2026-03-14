@@ -79,7 +79,10 @@ class SqliteBackend(MemoryBackend):
             self.conn.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self._usage_table} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    memory_id INTEGER NOT NULL,
+                    memory_id INTEGER NOT NULL
+                        REFERENCES {self._memories_table}(id)
+                        ON DELETE CASCADE
+                        ON UPDATE CASCADE,
                     timestamp TEXT NOT NULL
                 )
             """)
@@ -90,10 +93,57 @@ class SqliteBackend(MemoryBackend):
                 ON {self._usage_table} (memory_id)
             """)
             
+            # Migrate: if existing table lacks FK, rebuild it
+            self._migrate_usage_fk()
+            
             self.conn.commit()
             logger.info("SQLite schema ensured")
         except sqlite3.Error as e:
             logger.warning(f"Could not create schema: {e}")
+    
+    def _migrate_usage_fk(self):
+        """Rebuild memory_usage table with FK constraint if it lacks one."""
+        try:
+            # Check if the table has a FK already
+            fk_info = self.conn.execute(
+                f"PRAGMA foreign_key_list({self._usage_table})"
+            ).fetchall()
+            if fk_info:
+                return  # FK already exists
+            
+            # Check if the table has any rows worth migrating
+            count = self.conn.execute(
+                f"SELECT COUNT(*) FROM {self._usage_table}"
+            ).fetchone()[0]
+            
+            tmp = f"{self._usage_table}_old"
+            self.conn.execute(f"DROP INDEX IF EXISTS idx_{self._usage_table}_memory_id")
+            self.conn.execute(f"ALTER TABLE {self._usage_table} RENAME TO {tmp}")
+            self.conn.execute(f"""
+                CREATE TABLE {self._usage_table} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    memory_id INTEGER NOT NULL
+                        REFERENCES {self._memories_table}(id)
+                        ON DELETE CASCADE
+                        ON UPDATE CASCADE,
+                    timestamp TEXT NOT NULL
+                )
+            """)
+            self.conn.execute(f"""
+                CREATE INDEX idx_{self._usage_table}_memory_id
+                ON {self._usage_table} (memory_id)
+            """)
+            if count > 0:
+                self.conn.execute(f"""
+                    INSERT INTO {self._usage_table} (id, memory_id, timestamp)
+                    SELECT id, memory_id, timestamp FROM {tmp}
+                    WHERE memory_id IN (SELECT id FROM {self._memories_table})
+                """)
+            self.conn.execute(f"DROP TABLE {tmp}")
+            self.conn.commit()
+            logger.info(f"Migrated {self._usage_table}: added FK constraint ({count} rows)")
+        except sqlite3.Error as e:
+            logger.warning(f"FK migration skipped: {e}")
     
     def store_raw(
         self,
