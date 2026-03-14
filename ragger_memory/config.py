@@ -20,6 +20,10 @@ SQLITE_QUERY_LOG_TABLE = "query_log"
 # --- Query logging (all backends) ---
 QUERY_LOGGING_ENABLED = True
 
+# --- Usage tracking ---
+USAGE_TRACKING_ENABLED = True
+SQLITE_USAGE_TABLE = "memory_usage"
+
 # --- Embedding model ---
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # 384 dimensions, ~90MB
 EMBEDDING_DIMENSIONS = 384

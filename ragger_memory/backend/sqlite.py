@@ -11,7 +11,7 @@ from typing import List, Dict
 import numpy as np
 
 from .base import MemoryBackend
-from ..config import SQLITE_PATH, SQLITE_MEMORIES_TABLE, SQLITE_QUERY_LOG_TABLE
+from ..config import SQLITE_PATH, SQLITE_MEMORIES_TABLE, SQLITE_QUERY_LOG_TABLE, SQLITE_USAGE_TABLE, USAGE_TRACKING_ENABLED
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,7 @@ class SqliteBackend(MemoryBackend):
         self.db_path = Path(path_str).expanduser()
         self._memories_table = SQLITE_MEMORIES_TABLE
         self._query_log_table = SQLITE_QUERY_LOG_TABLE
+        self._usage_table = SQLITE_USAGE_TABLE
         
         # Auto-create parent directories
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -73,6 +74,20 @@ class SqliteBackend(MemoryBackend):
                     results TEXT,
                     timing TEXT
                 )
+            """)
+            
+            self.conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {self._usage_table} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    memory_id INTEGER NOT NULL,
+                    timestamp TEXT NOT NULL
+                )
+            """)
+            
+            # Index for fast lookups by memory_id
+            self.conn.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_{self._usage_table}_memory_id
+                ON {self._usage_table} (memory_id)
             """)
             
             self.conn.commit()
@@ -190,6 +205,25 @@ class SqliteBackend(MemoryBackend):
             
         except Exception as e:
             logger.warning(f"Failed to log query: {e}")
+    
+    def _track_search_usage(self, results: List[Dict]):
+        """Track usage of memories returned by search"""
+        if results:
+            self._track_usage([r["id"] for r in results])
+    
+    def _track_usage(self, memory_ids: list):
+        """Record usage of returned memories"""
+        if not USAGE_TRACKING_ENABLED or not memory_ids:
+            return
+        try:
+            timestamp = datetime.now(timezone.utc).isoformat()
+            self.conn.executemany(
+                f"INSERT INTO {self._usage_table} (memory_id, timestamp) VALUES (?, ?)",
+                [(int(mid), timestamp) for mid in memory_ids]
+            )
+            self.conn.commit()
+        except Exception as e:
+            logger.warning(f"Failed to track usage: {e}")
     
     def close(self):
         """Close SQLite connection"""

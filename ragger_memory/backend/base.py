@@ -261,6 +261,9 @@ class MemoryBackend(ABC):
                     min_score=min_score,
                 )
             
+            # Track usage of returned results
+            self._track_search_usage(results)
+            
             logger.info(
                 f"Search returned {len(results)} results "
                 f"(embed: {embedding_ms}ms, search: {search_ms}ms, total: {total_ms}ms)"
@@ -283,5 +286,12 @@ class MemoryBackend(ABC):
     ):
         """
         Optional query logging. Override in backends that support it, or no-op.
+        """
+        pass
+    
+    def _track_search_usage(self, results: List[Dict]):
+        """
+        Optional usage tracking. Override in backends that support it, or no-op.
+        Called after every search with the returned results.
         """
         pass
