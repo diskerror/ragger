@@ -25,6 +25,13 @@ QUERY_LOGGING_ENABLED = True
 USAGE_TRACKING_ENABLED = True
 SQLITE_USAGE_TABLE = "memory_usage"
 
+# --- Hybrid search (BM25 + vector) ---
+BM25_ENABLED = True
+BM25_WEIGHT = 0.3       # Weight for BM25 scores in hybrid merge (0.0–1.0)
+VECTOR_WEIGHT = 0.7     # Weight for vector cosine scores (should sum to 1.0 with BM25_WEIGHT)
+BM25_K1 = 1.5           # Term frequency saturation
+BM25_B = 0.75           # Document length normalization
+
 # --- Embedding model ---
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # 384 dimensions, ~90MB
 EMBEDDING_DIMENSIONS = 384

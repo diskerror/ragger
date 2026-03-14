@@ -11,7 +11,8 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from ..config import QUERY_LOGGING_ENABLED
+from ..bm25 import BM25Index
+from ..config import QUERY_LOGGING_ENABLED, BM25_ENABLED, BM25_WEIGHT, VECTOR_WEIGHT, BM25_K1, BM25_B
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,9 @@ class MemoryBackend(ABC):
         # Cache for embeddings (avoids re-reading from storage on every search)
         self._embedding_cache: Optional[tuple] = None
         self._cache_count: int = 0
+        
+        # BM25 index (built alongside embedding cache)
+        self._bm25: Optional[BM25Index] = None
     
     @abstractmethod
     def store_raw(
@@ -78,6 +82,7 @@ class MemoryBackend(ABC):
         """Invalidate the embedding cache after writes"""
         self._embedding_cache = None
         self._cache_count = 0
+        self._bm25 = None
     
     def _load_embeddings_cached(self) -> tuple:
         """
@@ -102,6 +107,11 @@ class MemoryBackend(ABC):
         
         self._embedding_cache = result
         self._cache_count = doc_count
+        
+        # Build BM25 index from the same texts
+        if BM25_ENABLED and result[1]:
+            self._bm25 = BM25Index(k1=BM25_K1, b=BM25_B)
+            self._bm25.build(result[1])  # result[1] = texts
         
         return result
     
@@ -203,12 +213,33 @@ class MemoryBackend(ABC):
             # Compute similarities (matrix-vector multiply)
             similarities = embeddings_norm @ query_norm
             
+            # Hybrid ranking: combine vector cosine + BM25
+            if BM25_ENABLED and self._bm25 is not None and self._bm25.is_built:
+                bm25_scores = self._bm25.score(query, filtered_indices)
+                
+                # Normalize both score arrays to [0, 1] for fair blending
+                vec_min, vec_max = similarities.min(), similarities.max()
+                if vec_max > vec_min:
+                    vec_norm = (similarities - vec_min) / (vec_max - vec_min)
+                else:
+                    vec_norm = similarities
+                
+                bm25_min, bm25_max = bm25_scores.min(), bm25_scores.max()
+                if bm25_max > bm25_min:
+                    bm25_norm = (bm25_scores - bm25_min) / (bm25_max - bm25_min)
+                else:
+                    bm25_norm = bm25_scores
+                
+                combined = VECTOR_WEIGHT * vec_norm + BM25_WEIGHT * bm25_norm
+            else:
+                combined = similarities
+            
             # Rank and filter — get top results from filtered set
-            top_k = min(limit, len(similarities))
-            ranked_local = np.argsort(similarities)[::-1][:top_k]
+            top_k = min(limit, len(combined))
+            ranked_local = np.argsort(combined)[::-1][:top_k]
             # Map back to original indices
             ranked_indices = filtered_indices[ranked_local]
-            ranked_scores = similarities[ranked_local]
+            ranked_scores = similarities[ranked_local]  # Report raw cosine as the score
             t_search_end = time.perf_counter()
             
             results = []
