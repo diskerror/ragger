@@ -12,7 +12,7 @@ from typing import Optional
 from .memory import RaggerMemory
 from .mcp_server import run_mcp_server
 from .server import run_server, DEFAULT_PORT
-from .config import DEFAULT_SEARCH_LIMIT, DEFAULT_MIN_SCORE, DEFAULT_CHUNK_SIZE
+from .config import DEFAULT_SEARCH_LIMIT, DEFAULT_MIN_SCORE, MINIMUM_CHUNK_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ def convert_backend(source_engine: str, dest_engine: str):
 def import_file(
     memory: RaggerMemory,
     filepath: str,
-    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    min_chunk_size: int = MINIMUM_CHUNK_SIZE,
     metadata: Optional[dict] = None
 ):
     """
@@ -108,7 +108,7 @@ def import_file(
     Args:
         memory: RaggerMemory instance
         filepath: Path to file
-        chunk_size: Max characters per chunk (default: 500)
+        min_chunk_size: Merge short paragraphs until at least this size (default: 500)
         metadata: Additional metadata to attach
     """
     path = Path(filepath)
@@ -131,7 +131,7 @@ def import_file(
 
     text = re.sub(r'\n{3,}', '\n\n', text)  # collapse extra blank lines left behind
 
-    source_meta = {"source": str(path), "filename": path.name}
+    source_meta = {"source": str(path)}
     if metadata:
         source_meta.update(metadata)
     
@@ -207,23 +207,26 @@ def import_file(
         annotated.append(('\n\n'.join(pending_headings), section))
         pending_headings = []
 
-    # Chunk annotated paragraphs: merge small ones up to chunk_size,
-    # but NEVER split a paragraph. Oversized paragraphs become their own chunk.
+    # Chunk annotated paragraphs: merge short paragraphs until the buffer
+    # reaches min_chunk_size, then flush. Paragraphs are NEVER split.
+    # A single paragraph larger than min_chunk_size becomes its own chunk.
     chunks: list[tuple[str, str]] = []  # (chunk_text, section)
     current = ""
     current_section = ""
 
     for full_text, section in annotated:
-        candidate = current + ('\n\n' if current else '') + full_text
-        if len(candidate) > chunk_size and current:
-            # Current buffer is full — flush it
+        if not current:
+            # Start a new buffer
+            current = full_text
+            current_section = section
+        elif len(current) >= min_chunk_size:
+            # Buffer has reached minimum — flush it, start new
             chunks.append((current.strip(), current_section))
             current = full_text
             current_section = section
         else:
-            if not current:
-                current_section = section
-            current = candidate
+            # Buffer is still short — merge this paragraph in
+            current = current + '\n\n' + full_text
     if current.strip():
         chunks.append((current.strip(), current_section))
 
@@ -260,8 +263,8 @@ Examples:
   # Import multiple files
   ragger.py --import-file doc1.md doc2.md doc3.md
   
-  # Import with chunking
-  ragger.py --import-file large_doc.txt --chunk-size 500
+  # Import with minimum chunk size
+  ragger.py --import-file large_doc.txt --min-chunk-size 500
   
   # Run as MCP server for OpenClaw
   ragger.py --mcp
@@ -283,7 +286,7 @@ Examples:
     parser.add_argument('--store', type=str, help="Store a memory")
     parser.add_argument('--search', type=str, help="Search memories")
     parser.add_argument('--import-file', type=str, nargs='+', help="Import one or more files")
-    parser.add_argument('--chunk-size', type=int, default=DEFAULT_CHUNK_SIZE, help=f"Max chars per chunk (default: {DEFAULT_CHUNK_SIZE})")
+    parser.add_argument('--min-chunk-size', type=int, default=MINIMUM_CHUNK_SIZE, help=f"Merge short paragraphs until at least this size (default: {MINIMUM_CHUNK_SIZE})")
     parser.add_argument('--collection', type=str, default=None, help="Collection name for import or search (e.g. music, sibelius, forscore, memory)")
     parser.add_argument('--collections', type=str, nargs='+', default=None, help="Collections to search (default: memory only; use '*' for all)")
     parser.add_argument('--limit', type=int, default=DEFAULT_SEARCH_LIMIT, help=f"Max search results (default: {DEFAULT_SEARCH_LIMIT})")
@@ -365,7 +368,7 @@ Examples:
                 if args.collection:
                     import_meta['collection'] = args.collection
                 for filepath in args.import_file:
-                    import_file(memory, filepath, args.chunk_size, import_meta if import_meta else None)
+                    import_file(memory, filepath, args.min_chunk_size, import_meta if import_meta else None)
             
             elif args.search:
                 collections = args.collections or (
