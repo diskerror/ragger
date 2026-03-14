@@ -11,8 +11,15 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+import os
+
 from ..bm25 import BM25Index
-from ..config import QUERY_LOGGING_ENABLED, BM25_ENABLED, BM25_WEIGHT, VECTOR_WEIGHT, BM25_K1, BM25_B
+from ..config import QUERY_LOGGING_ENABLED, BM25_ENABLED, BM25_WEIGHT, VECTOR_WEIGHT, BM25_K1, BM25_B, NORMALIZE_HOME_PATH
+
+# Resolve actual home path once at import time (e.g. "/Volumes/WDBlack2")
+_HOME_DIR = os.path.expanduser("~")
+# Ensure it ends with / for clean replacement
+_HOME_PREFIX = _HOME_DIR if _HOME_DIR.endswith("/") else _HOME_DIR + "/"
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +122,32 @@ class MemoryBackend(ABC):
         
         return result
     
+    @staticmethod
+    def _normalize_paths(text: str) -> str:
+        """Replace home directory path with ~ in text."""
+        if NORMALIZE_HOME_PATH and _HOME_PREFIX:
+            text = text.replace(_HOME_PREFIX, "~/")
+        return text
+    
+    @staticmethod
+    def _normalize_metadata(metadata: dict) -> dict:
+        """Replace home directory paths with ~ in metadata string values."""
+        if not NORMALIZE_HOME_PATH or not _HOME_PREFIX:
+            return metadata
+        
+        normalized = {}
+        for key, value in metadata.items():
+            if isinstance(value, str):
+                normalized[key] = value.replace(_HOME_PREFIX, "~/")
+            elif isinstance(value, list):
+                normalized[key] = [
+                    v.replace(_HOME_PREFIX, "~/") if isinstance(v, str) else v
+                    for v in value
+                ]
+            else:
+                normalized[key] = value
+        return normalized
+    
     def store(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> str:
         """
         Encode and store a memory
@@ -127,10 +160,13 @@ class MemoryBackend(ABC):
             Memory ID (str)
         """
         try:
+            text = self._normalize_paths(text)
+            meta = self._normalize_metadata(metadata or {})
+            
             embedding = self.embedder.encode(text).tolist()
             timestamp = datetime.now(timezone.utc)
             
-            memory_id = self.store_raw(text, embedding, metadata or {}, timestamp)
+            memory_id = self.store_raw(text, embedding, meta, timestamp)
             self._invalidate_cache()
             
             logger.info(f"Stored memory: {memory_id}")

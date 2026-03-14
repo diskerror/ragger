@@ -25,6 +25,9 @@ QUERY_LOGGING_ENABLED = True
 USAGE_TRACKING_ENABLED = True
 SQLITE_USAGE_TABLE = "memory_usage"
 
+# --- Path normalization ---
+NORMALIZE_HOME_PATH = True  # Replace $HOME with ~ in stored text and metadata
+
 # --- Hybrid search (BM25 + vector) ---
 BM25_ENABLED = True
 BM25_WEIGHT = 0.3       # Weight for BM25 scores in hybrid merge (0.0–1.0)
