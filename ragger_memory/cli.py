@@ -174,9 +174,10 @@ def import_file(
             return '\n\n'.join('#' * level + ' ' + txt for level, txt in heading_stack)
         return ''
 
-    # Two-pass: first build (text, section) tuples, then chunk them
-    # Each tuple is a body paragraph with its heading context
-    annotated: list[tuple[str, str]] = []  # (text_with_heading, section_breadcrumb)
+    # Two-pass: first build (body, heading_block, section) tuples, then chunk them.
+    # Heading block is stored separately so it's only prepended once per chunk
+    # (or when the section changes within a chunk).
+    annotated: list[tuple[str, str, str]] = []  # (body_text, heading_block, section)
 
     for para in raw_paragraphs:
         para = para.strip()
@@ -191,42 +192,45 @@ def import_file(
             heading_stack.append((level, _heading_text(para)))
             pending_headings.append(para)
         else:
-            # Body paragraph — attach full heading chain and section breadcrumb
+            # Body paragraph — store with heading context (not yet merged)
             heading_block = _current_heading_block()
             section = _current_section()
-            if heading_block:
-                full_text = heading_block + '\n\n' + para
-            else:
-                full_text = para
-            annotated.append((full_text, section))
+            annotated.append((para, heading_block, section))
             pending_headings = []
 
     # Trailing headings with no body
     if pending_headings:
         section = _current_section()
-        annotated.append(('\n\n'.join(pending_headings), section))
+        annotated.append(('\n\n'.join(pending_headings), '', section))
         pending_headings = []
 
     # Chunk annotated paragraphs: merge short paragraphs until the buffer
     # reaches min_chunk_size, then flush. Paragraphs are NEVER split.
-    # A single paragraph larger than min_chunk_size becomes its own chunk.
+    # Heading block is prepended only at the start of a chunk or when
+    # the section changes mid-chunk.
     chunks: list[tuple[str, str]] = []  # (chunk_text, section)
     current = ""
     current_section = ""
 
-    for full_text, section in annotated:
+    for body, heading_block, section in annotated:
         if not current:
-            # Start a new buffer
-            current = full_text
+            # Start a new buffer — prepend heading block
+            current = (heading_block + '\n\n' + body) if heading_block else body
             current_section = section
         elif len(current) >= min_chunk_size:
-            # Buffer has reached minimum — flush it, start new
+            # Buffer has reached minimum — flush it, start new chunk
             chunks.append((current.strip(), current_section))
-            current = full_text
+            current = (heading_block + '\n\n' + body) if heading_block else body
             current_section = section
         else:
             # Buffer is still short — merge this paragraph in
-            current = current + '\n\n' + full_text
+            if section != current_section and heading_block:
+                # Section changed — insert new heading block
+                current = current + '\n\n' + heading_block + '\n\n' + body
+                current_section = section
+            else:
+                # Same section — just append the body
+                current = current + '\n\n' + body
     if current.strip():
         chunks.append((current.strip(), current_section))
 
