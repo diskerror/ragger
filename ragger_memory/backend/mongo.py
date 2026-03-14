@@ -10,7 +10,7 @@ from pymongo import MongoClient, DESCENDING
 from pymongo.errors import PyMongoError
 
 from .base import MemoryBackend
-from ..config import MONGODB_DB_NAME, MONGODB_COLLECTION, MONGODB_QUERY_LOG_COLLECTION, MONGODB_URI
+from ..config import MONGODB_DB_NAME, MONGODB_COLLECTION, MONGODB_QUERY_LOG_COLLECTION, MONGODB_USAGE_COLLECTION, MONGODB_URI, USAGE_TRACKING_ENABLED
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,7 @@ class MongoBackend(MemoryBackend):
         self.db = None
         self.collection = None
         self.query_log = None
+        self.usage_col = None
         
         self._connect()
         self._ensure_indexes()
@@ -45,6 +46,7 @@ class MongoBackend(MemoryBackend):
             self.db = self.client[MONGODB_DB_NAME]
             self.collection = self.db[MONGODB_COLLECTION]
             self.query_log = self.db[MONGODB_QUERY_LOG_COLLECTION]
+            self.usage_col = self.db[MONGODB_USAGE_COLLECTION]
             logger.info(f"Connected to MongoDB: {MONGODB_DB_NAME}.{MONGODB_COLLECTION}")
         except PyMongoError as e:
             logger.error(f"MongoDB connection failed: {e}")
@@ -57,6 +59,8 @@ class MongoBackend(MemoryBackend):
             self.collection.create_index("metadata.source")
             self.collection.create_index("metadata.category")
             self.query_log.create_index("timestamp")
+            self.usage_col.create_index("memory_id")
+            self.usage_col.create_index("timestamp")
             logger.info("MongoDB indexes ensured")
         except PyMongoError as e:
             logger.warning(f"Could not create indexes: {e}")
@@ -144,6 +148,21 @@ class MongoBackend(MemoryBackend):
         except Exception as e:
             # Don't let logging failures break search
             logger.warning(f"Failed to log query: {e}")
+    
+    def _track_search_usage(self, results: List[Dict]):
+        """Track usage of memories returned by search"""
+        if not USAGE_TRACKING_ENABLED or not results:
+            return
+        try:
+            from datetime import timezone
+            timestamp = datetime.now(timezone.utc)
+            docs = [
+                {"memory_id": r["id"], "timestamp": timestamp}
+                for r in results
+            ]
+            self.usage_col.insert_many(docs)
+        except Exception as e:
+            logger.warning(f"Failed to track usage: {e}")
     
     def close(self):
         """Close MongoDB connection"""

@@ -11,6 +11,7 @@ MONGODB_URI = "mongodb://localhost:27017/"
 MONGODB_DB_NAME = "ragger"
 MONGODB_COLLECTION = "memories"
 MONGODB_QUERY_LOG_COLLECTION = "query_log"
+MONGODB_USAGE_COLLECTION = "memory_usage"
 
 # --- SQLite backend ---
 SQLITE_PATH = "~/.local/share/ragger/memories.db"
