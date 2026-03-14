@@ -11,7 +11,7 @@ from typing import Optional
 
 from .memory import RaggerMemory
 from .mcp_server import run_mcp_server
-from .server import run_server, DEFAULT_PORT
+from .server import run_server, DEFAULT_HOST, DEFAULT_PORT
 from .config import DEFAULT_SEARCH_LIMIT, DEFAULT_MIN_SCORE, MINIMUM_CHUNK_SIZE
 
 logger = logging.getLogger(__name__)
@@ -297,6 +297,7 @@ Examples:
     parser.add_argument('--min-score', type=float, default=DEFAULT_MIN_SCORE, help=f"Min similarity score (default: {DEFAULT_MIN_SCORE})")
     parser.add_argument('--count', action='store_true', help="Show number of stored memories")
     parser.add_argument('--server', action='store_true', help="Run HTTP server")
+    parser.add_argument('--host', type=str, default=DEFAULT_HOST, help=f"HTTP server bind address (default: {DEFAULT_HOST})")
     parser.add_argument('--port', type=int, default=DEFAULT_PORT, help=f"HTTP server port (default: {DEFAULT_PORT})")
     parser.add_argument('--update-model', action='store_true', help="Download or update the embedding model")
     parser.add_argument('--convert', nargs=2, metavar=('FROM', 'TO'),
@@ -332,7 +333,7 @@ Examples:
         return
     
     if args.server:
-        run_server(args.port)
+        run_server(args.host, args.port)
         return
     
     if args.convert:

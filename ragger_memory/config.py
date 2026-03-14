@@ -44,6 +44,7 @@ MODEL_CACHE_DIR = os.environ.get(
 )
 
 # --- Server ---
+DEFAULT_HOST = '127.0.0.1'
 DEFAULT_PORT = 8432
 
 # --- Search defaults ---

@@ -10,7 +10,7 @@ from .memory import RaggerMemory
 
 logger = logging.getLogger(__name__)
 
-from .config import DEFAULT_PORT
+from .config import DEFAULT_HOST, DEFAULT_PORT
 
 # Module-level reference so the handler can access it
 _memory = None
@@ -90,14 +90,14 @@ class RaggerHandler(BaseHTTPRequestHandler):
         logger.info(f"{self.address_string()} {format % args}")
 
 
-def run_server(port: int = DEFAULT_PORT):
+def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     """Start the HTTP server"""
     global _memory
     
     _memory = RaggerMemory()
     
-    server = HTTPServer(('127.0.0.1', port), RaggerHandler)
-    print(f"Ragger Memory server running on http://localhost:{port}")
+    server = HTTPServer((host, port), RaggerHandler)
+    print(f"Ragger Memory server running on http://{host}:{port}")
     print(f"Endpoints:")
     print(f"  POST /store   - {{\"text\": \"...\", \"metadata\": {{...}}}}")
     print(f"  POST /search  - {{\"query\": \"...\", \"limit\": 5}}")
