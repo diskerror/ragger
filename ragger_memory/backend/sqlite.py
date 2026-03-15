@@ -47,6 +47,7 @@ class SqliteBackend(MemoryBackend):
         """Connect to SQLite database"""
         try:
             self.conn = sqlite3.connect(str(self.db_path))
+            self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.execute("PRAGMA foreign_keys = ON")
             logger.info(f"Connected to SQLite: {self.db_path}")
         except sqlite3.Error as e:
