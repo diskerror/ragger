@@ -331,7 +331,15 @@ Examples:
     args = parser.parse_args()
     
     # Configure logging
-    level = logging.DEBUG if args.verbose else logging.INFO
+    # Server mode defaults to INFO (operational monitoring)
+    # CLI commands default to WARNING (quiet output)
+    # --verbose enables DEBUG for everything
+    if args.verbose:
+        level = logging.DEBUG
+    elif hasattr(args, 'server') and args.server:
+        level = logging.INFO
+    else:
+        level = logging.WARNING
     logging.basicConfig(
         level=level,
         format='%(asctime)s [%(levelname)s] %(message)s',

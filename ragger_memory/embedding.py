@@ -77,7 +77,34 @@ class Embedder:
         try:
             # Force CPU — MPS (Metal) can throw I/O errors in background
             # processes. CPU is fast enough for 384-dim embeddings.
-            self.model = SentenceTransformer(model_path, device="cpu")
+            # Suppress noisy model load output (progress bars, load reports)
+            import os, sys, io
+            _prev_tqdm = os.environ.get("TQDM_DISABLE")
+            os.environ["TQDM_DISABLE"] = "1"
+            for _name in ("sentence_transformers", "mlx", "transformers",
+                          "mlx_lm", "huggingface_hub"):
+                logging.getLogger(_name).setLevel(logging.WARNING)
+            # MLX prints load report via C-level stderr — redirect fd
+            _quiet = logging.getLogger().getEffectiveLevel() > logging.DEBUG
+            if _quiet:
+                _devnull = os.open(os.devnull, os.O_WRONLY)
+                _saved_stdout = os.dup(1)
+                _saved_stderr = os.dup(2)
+                os.dup2(_devnull, 1)
+                os.dup2(_devnull, 2)
+                os.close(_devnull)
+            try:
+                self.model = SentenceTransformer(model_path, device="cpu")
+            finally:
+                if _quiet:
+                    os.dup2(_saved_stdout, 1)
+                    os.dup2(_saved_stderr, 2)
+                    os.close(_saved_stdout)
+                    os.close(_saved_stderr)
+            if _prev_tqdm is None:
+                os.environ.pop("TQDM_DISABLE", None)
+            else:
+                os.environ["TQDM_DISABLE"] = _prev_tqdm
             logger.info(f"Embedding model loaded: {EMBEDDING_MODEL} (cpu)")
         except Exception as e:
             logger.error(f"Failed to load embedding model from {model_path}: {e}")
@@ -93,7 +120,7 @@ class Embedder:
         Returns:
             NumPy array of shape (EMBEDDING_DIMENSIONS,)
         """
-        return self.model.encode(text)
+        return self.model.encode(text, show_progress_bar=False)
     
     @staticmethod
     def download_model():
