@@ -256,34 +256,48 @@ def main():
         epilog="""
 Examples:
   # Store a memory
-  ragger.py --store "Reid prefers MacPorts over Homebrew"
+  ragger --store "The deploy script requires Node 18+"
   
-  # Search memories
-  ragger.py --search "package manager preferences"
+  # Search memories (default: searches 'memory' collection only)
+  ragger --search "deployment requirements"
   
-  # Import a file
-  ragger.py --import-file MEMORY.md
+  # Search specific collections
+  ragger --search "transposition" --collections sibelius
+  ragger --search "instrument ranges" --collections docs reference
+  
+  # Search all collections
+  ragger --search "authentication" --collections '*'
+  
+  # Import a file (default collection: memory)
+  ragger --import-file notes.md
+  
+  # Import into a named collection
+  ragger --import-file api-guide.md --collection docs
   
   # Import multiple files
-  ragger.py --import-file doc1.md doc2.md doc3.md
+  ragger --import-file doc1.md doc2.md doc3.md --collection reference
   
-  # Import with minimum chunk size
-  ragger.py --import-file large_doc.txt --min-chunk-size 500
+  # Import with custom minimum chunk size
+  ragger --import-file large_doc.txt --min-chunk-size 500
   
-  # Run as MCP server for OpenClaw
-  ragger.py --mcp
+  # Run HTTP server (for OpenClaw or any HTTP client)
+  ragger --server
+  ragger --server --host 0.0.0.0 --port 9000
+  
+  # Run as MCP server
+  ragger --mcp
   
   # Convert all memories from MongoDB to SQLite
-  ragger.py --convert mongodb sqlite
+  ragger --convert mongodb sqlite
   
   # Export documents back to files
-  ragger.py --export-docs music ./exported/music/
+  ragger --export-docs docs ./exported/docs/
   
   # Export conversation memories
-  ragger.py --export-memories ./exported/memories/
+  ragger --export-memories ./exported/memories/
   
   # Export everything
-  ragger.py --export-all ./exported/
+  ragger --export-all ./exported/
         """
     )
     
@@ -291,7 +305,7 @@ Examples:
     parser.add_argument('--search', type=str, help="Search memories")
     parser.add_argument('--import-file', type=str, nargs='+', help="Import one or more files")
     parser.add_argument('--min-chunk-size', type=int, default=MINIMUM_CHUNK_SIZE, help=f"Merge short paragraphs until at least this size (default: {MINIMUM_CHUNK_SIZE})")
-    parser.add_argument('--collection', type=str, default=None, help="Collection name for import or search (e.g. music, sibelius, forscore, memory)")
+    parser.add_argument('--collection', type=str, default=None, help="Collection name for import or search (e.g. docs, reference, memory)")
     parser.add_argument('--collections', type=str, nargs='+', default=None, help="Collections to search (default: memory only; use '*' for all)")
     parser.add_argument('--limit', type=int, default=DEFAULT_SEARCH_LIMIT, help=f"Max search results (default: {DEFAULT_SEARCH_LIMIT})")
     parser.add_argument('--min-score', type=float, default=DEFAULT_MIN_SCORE, help=f"Min similarity score (default: {DEFAULT_MIN_SCORE})")
