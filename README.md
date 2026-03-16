@@ -124,29 +124,27 @@ antecedents, etc.).
 # Run MCP server (JSON-RPC over stdio)
 ./ragger.py --mcp
 
-# Plain text search via MCP (no JSON required)
-echo "transposition" | ./ragger.py --mcp
+# Run MCP server (also accepts plain text queries interactively)
+./ragger.py --mcp
 ```
 
 #### MCP Plain Text Mode
 
 The MCP server accepts both JSON-RPC and plain text input. If a line
 isn't JSON, it's treated as a search query and results are returned
-as plain text — useful for piping and quick testing:
+as readable plain text:
 
-```bash
-echo "instrument ranges" | ./ragger.py --mcp
 ```
-
-Output:
-```
+> instrument ranges
 1. [score: 0.523] (Orchestration Guide.md) [reference]
    The clarinet has a written range from E3 to C7...
 
 Timing: 12.3ms (10614 chunks)
 ```
 
-JSON-RPC and plain text can be interleaved freely on the same stdin.
+JSON-RPC and plain text can be interleaved freely in the same session.
+For one-shot scripting, use `--search` instead (loads model, runs query,
+exits).
 
 #### Endpoints
 
