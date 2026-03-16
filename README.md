@@ -13,7 +13,7 @@ No external APIs, no cloud services — everything runs locally.
 - **Fast vector search** — NumPy cosine similarity (~10-50ms for 50K documents)
 - **Pluggable backends** — MongoDB or SQLite (easy to add more)
 - **HTTP server** — REST API on localhost for tool integration
-- **MCP server** — JSON-RPC over stdin/stdout (Model Context Protocol)
+- **MCP server** — JSON-RPC over stdin/stdout (Model Context Protocol), with plain text fallback
 - **Collection filtering** — Organize memories into searchable collections (e.g. `docs`, `reference`, `memory`)
 - **Usage tracking** — Per-memory access stats for identifying high-value content
 - **Path normalization** — `$HOME` → `~/` for portable, privacy-friendly storage
@@ -123,7 +123,30 @@ antecedents, etc.).
 
 # Run MCP server (JSON-RPC over stdio)
 ./ragger.py --mcp
+
+# Plain text search via MCP (no JSON required)
+echo "transposition" | ./ragger.py --mcp
 ```
+
+#### MCP Plain Text Mode
+
+The MCP server accepts both JSON-RPC and plain text input. If a line
+isn't JSON, it's treated as a search query and results are returned
+as plain text — useful for piping and quick testing:
+
+```bash
+echo "instrument ranges" | ./ragger.py --mcp
+```
+
+Output:
+```
+1. [score: 0.523] (Orchestration Guide.md) [reference]
+   The clarinet has a written range from E3 to C7...
+
+Timing: 12.3ms (10614 chunks)
+```
+
+JSON-RPC and plain text can be interleaved freely on the same stdin.
 
 #### Endpoints
 
