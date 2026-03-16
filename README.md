@@ -11,7 +11,7 @@ No external APIs, no cloud services — everything runs locally.
 - **Local embeddings** — `all-MiniLM-L6-v2` via sentence-transformers (384-dim, ~90MB)
 - **Hybrid search** — BM25 keyword + vector cosine similarity (pure Python, configurable blend)
 - **Fast vector search** — NumPy cosine similarity (~10-50ms for 50K documents)
-- **Pluggable backends** — MongoDB or SQLite (easy to add more)
+- **Pluggable backends** — SQLite (default); abstract base class makes it easy to add more
 - **HTTP server** — REST API on localhost for tool integration
 - **MCP server** — JSON-RPC over stdin/stdout (Model Context Protocol), with plain text fallback
 - **Collection filtering** — Organize memories into searchable collections (e.g. `docs`, `reference`, `memory`)
@@ -25,7 +25,6 @@ No external APIs, no cloud services — everything runs locally.
 
 - Python 3.10+
 - ~1GB disk for model + dependencies
-- **MongoDB backend:** MongoDB 6+ (running locally, no auth required)
 - **SQLite backend:** No extra dependencies (uses Python stdlib)
 
 ## Setup
@@ -42,20 +41,14 @@ pip install -r requirements.txt
 First run downloads the embedding model (~90MB) to your HuggingFace cache.
 After that, all operations are offline.
 
-### 2. Choose a storage backend
+### 2. Storage
 
-Edit `ragger_memory/config.py`:
+SQLite is the default backend — zero setup, single-file database at
+`~/.local/share/ragger/memories.db`. No configuration needed.
 
-```python
-STORAGE_ENGINE = "sqlite"  # or "mongodb"
-```
-
-**MongoDB** — requires a running `mongod` instance:
-```bash
-mongosh --eval "db.runCommand({ping:1})"
-```
-
-**SQLite** — zero setup, single-file database at `~/.local/share/ragger/memories.db`.
+> **Note:** The MongoDB backend (`backend/mongo.py`) is planned for removal
+> in v0.5.0. The abstract `MemoryBackend` base class remains, making it
+> straightforward to add new backends (Postgres, Qdrant, etc.) if needed.
 
 ### 3. Test
 
@@ -315,7 +308,7 @@ Ragger/
 │   └── backend/                # Storage backends
 │       ├── __init__.py
 │       ├── base.py             # MemoryBackend ABC (NumPy cosine similarity)
-│       ├── mongo.py            # MongoBackend (MongoDB)
+│       ├── mongo.py            # MongoBackend (MongoDB) — deprecated, removal planned for v0.5.0
 │       └── sqlite.py           # SqliteBackend (SQLite)
 ├── ragger.py                   # Entry point (chmod +x)
 ├── requirements.txt            # Python dependencies
@@ -423,9 +416,6 @@ Edit `ragger_memory/config.py` or set environment variables:
 | Setting | Default | Env Var |
 |---------|---------|---------|
 | Storage engine | `sqlite` | — |
-| MongoDB URI | `mongodb://localhost:27017/` | — |
-| MongoDB database | `ragger` | — |
-| MongoDB collection | `memories` | — |
 | SQLite path | `~/.local/share/ragger/memories.db` | — |
 | Embedding model | `all-MiniLM-L6-v2` | — |
 | HF cache | `~/.cache/huggingface` | `SENTENCE_TRANSFORMERS_HOME` |
@@ -438,22 +428,6 @@ Edit `ragger_memory/config.py` or set environment variables:
 | Query logging | `True` | — |
 
 ## Database Schema
-
-### MongoDB
-
-```javascript
-// ragger.memories
-{
-  _id: ObjectId,
-  text: "The deploy script requires Node 18+",
-  embedding: [0.012, -0.034, ...],  // 384-dim float array
-  timestamp: ISODate("2026-02-24"),
-  metadata: {
-    source: "USER.md",
-    category: "preference"
-  }
-}
-```
 
 ### SQLite
 
@@ -486,7 +460,7 @@ Search queries are logged to a separate collection/table for quality
 analysis. Each query records timing, result scores, and quality metrics.
 
 ```javascript
-// MongoDB: ragger.query_log (SQLite: query_log table)
+// query_log table
 {
   _id: ObjectId,
   timestamp: ISODate("2026-02-26T20:22:39.343Z"),
