@@ -8,6 +8,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict
 
+# Dedicated query logger (search queries, scores, timing → query.log)
+query_logger = logging.getLogger('ragger_memory.query')
+
 import numpy as np
 
 from .backend import MemoryBackend
@@ -264,7 +267,7 @@ class SqliteBackend(MemoryBackend):
         limit: int,
         min_score: float
     ):
-        """Log a search query to the SQLite query_log table"""
+        """Log a search query to the SQLite query_log table and query.log file"""
         try:
             log_entry = {
                 "query": query,
@@ -290,6 +293,14 @@ class SqliteBackend(MemoryBackend):
             results_json = json.dumps(log_entry)
             timing_json = json.dumps(timing)
             
+            # Log to query.log file
+            query_logger.info(
+                f"query=\"{query}\" results={len(results)} "
+                f"top_score={top_score:.4f} total_ms={timing.get('total_ms', '?')} "
+                f"corpus={timing.get('corpus_size', '?')}"
+            )
+            
+            # Log to SQLite query_log table
             self.conn.execute(
                 f"INSERT INTO {self._query_log_table} (timestamp, query, results, timing) "
                 f"VALUES (?, ?, ?, ?)",

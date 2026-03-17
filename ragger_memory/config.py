@@ -24,8 +24,12 @@ MODEL_CACHE_DIR = os.environ.get(
     os.path.expanduser('~/.cache/huggingface')
 )
 
-# --- Query logging (all backends) ---
-QUERY_LOGGING_ENABLED = True
+# --- Logging ---
+LOG_DIR = os.path.expanduser("~/.ragger")
+QUERY_LOG_ENABLED = True       # query.log — search queries, scores, timing
+HTTP_LOG_ENABLED = True        # http.log — HTTP server requests/responses
+MCP_LOG_ENABLED = True         # mcp.log — MCP JSON-RPC interactions
+# error.log is always on
 
 # --- Usage tracking ---
 USAGE_TRACKING_ENABLED = True

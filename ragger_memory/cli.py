@@ -265,24 +265,10 @@ Examples:
     args = parser.parse_args()
     
     # Configure logging
-    # Server mode defaults to INFO (operational monitoring)
-    # CLI commands default to WARNING (quiet output)
-    # --verbose enables DEBUG for everything
-    if args.verbose:
-        level = logging.DEBUG
-    elif hasattr(args, 'server') and args.server:
-        level = logging.INFO
-    else:
-        level = logging.WARNING
-    log_dir = Path("~/.ragger").expanduser()
-    log_dir.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        level=level,
-        format='%(asctime)s [%(levelname)s] %(message)s',
-        handlers=[
-            logging.FileHandler(log_dir / 'ragger.log'),
-            logging.StreamHandler()
-        ]
+    from .logs import setup_logging
+    setup_logging(
+        verbose=args.verbose,
+        server_mode=(hasattr(args, 'server') and args.server)
     )
     
     if args.update_model:

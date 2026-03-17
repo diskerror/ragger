@@ -9,6 +9,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from .memory import RaggerMemory
 
 logger = logging.getLogger(__name__)
+# Dedicated HTTP log (request/response details)
+http_logger = logging.getLogger('ragger_memory.http')
 
 from .config import DEFAULT_HOST, DEFAULT_PORT
 
@@ -87,7 +89,7 @@ class RaggerHandler(BaseHTTPRequestHandler):
     
     def log_message(self, format, *args):
         """Route HTTP logs through our logger instead of stderr"""
-        logger.info(f"{self.address_string()} {format % args}")
+        http_logger.info(f"{self.address_string()} {format % args}")
 
 
 def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):

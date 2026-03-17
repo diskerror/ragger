@@ -8,6 +8,9 @@ import logging
 
 from .memory import RaggerMemory
 
+# Dedicated MCP logger (JSON-RPC interactions → mcp.log)
+mcp_logger = logging.getLogger('ragger_memory.mcp')
+
 logger = logging.getLogger(__name__)
 
 
@@ -105,7 +108,7 @@ def run_mcp_server():
     
     # Main loop: read requests from stdin
     # Accepts JSON-RPC (MCP) or plain text (search shortcut)
-    logger.info("MCP server started, waiting for requests...")
+    mcp_logger.info("MCP server started, waiting for requests...")
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -115,11 +118,14 @@ def run_mcp_server():
         if line.startswith("{"):
             try:
                 request = json.loads(line)
+                mcp_logger.info(f"request: {request.get('method', 'unknown')}")
                 handle_request(request)
             except json.JSONDecodeError:
                 # Looks like JSON but isn't — treat as plain text
+                mcp_logger.info(f"plain text query: {line[:100]}")
                 handle_plain_text(line)
         else:
+            mcp_logger.info(f"plain text query: {line[:100]}")
             handle_plain_text(line)
     
     memory.close()

@@ -14,7 +14,7 @@ import numpy as np
 import os
 
 from .bm25 import BM25Index
-from .config import QUERY_LOGGING_ENABLED, BM25_ENABLED, BM25_WEIGHT, VECTOR_WEIGHT, BM25_K1, BM25_B, NORMALIZE_HOME_PATH, DEFAULT_COLLECTION
+from .config import QUERY_LOG_ENABLED, BM25_ENABLED, BM25_WEIGHT, VECTOR_WEIGHT, BM25_K1, BM25_B, NORMALIZE_HOME_PATH, DEFAULT_COLLECTION
 
 # Resolve actual home path once at import time (e.g. "/Volumes/WDBlack2")
 _HOME_DIR = os.path.expanduser("~")
@@ -314,7 +314,7 @@ class MemoryBackend(ABC):
             }
             
             # Log the query (if enabled)
-            if QUERY_LOGGING_ENABLED:
+            if QUERY_LOG_ENABLED:
                 scores = [r["score"] for r in results]
                 top_score = scores[0] if scores else 0.0
                 score_gap = (scores[0] - scores[1]) if len(scores) >= 2 else 0.0
