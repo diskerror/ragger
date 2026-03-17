@@ -44,10 +44,14 @@ After that, all operations are offline.
 ### 2. Storage
 
 SQLite is the default backend — zero setup, single-file database at
-`~/.local/share/ragger/memories.db`. No configuration needed.
+`~/.ragger/memories.db`. No configuration needed.
 
 The abstract `MemoryBackend` base class makes it straightforward to add
 new backends (Postgres, Qdrant, etc.) — see "Writing a Custom Backend" below.
+
+> **Upgrading from v0.4.x:** The database location moved from
+> `~/.local/share/ragger/memories.db` to `~/.ragger/memories.db`.
+> Copy or move your database file to the new location.
 
 ### 3. Test
 
@@ -450,7 +454,7 @@ Edit `ragger_memory/config.py` or set environment variables:
 | Setting | Default | Env Var |
 |---------|---------|---------|
 | Storage engine | `sqlite` | — |
-| SQLite path | `~/.local/share/ragger/memories.db` | — |
+| SQLite path | `~/.ragger/memories.db` | — |
 | Embedding model | `all-MiniLM-L6-v2` | — |
 | HF cache | `~/.cache/huggingface` | `SENTENCE_TRANSFORMERS_HOME` |
 | Server host | `127.0.0.1` | — |
