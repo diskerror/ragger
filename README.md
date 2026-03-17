@@ -46,9 +46,8 @@ After that, all operations are offline.
 SQLite is the default backend — zero setup, single-file database at
 `~/.local/share/ragger/memories.db`. No configuration needed.
 
-> **Note:** The MongoDB backend (`backend/mongo.py`) is planned for removal
-> in v0.5.0. The abstract `MemoryBackend` base class remains, making it
-> straightforward to add new backends (Postgres, Qdrant, etc.) if needed.
+The abstract `MemoryBackend` base class makes it straightforward to add
+new backends (Postgres, Qdrant, etc.) — see "Writing a Custom Backend" below.
 
 ### 3. Test
 
@@ -298,18 +297,15 @@ versus conversation history.
 Ragger/
 ├── ragger_memory/              # Python package
 │   ├── __init__.py             # Package exports
+│   ├── backend.py              # MemoryBackend ABC (NumPy cosine similarity)
+│   ├── sqlite_backend.py       # SqliteBackend (SQLite)
 │   ├── bm25.py                 # Pure Python BM25 (Okapi) implementation
-│   ├── config.py               # Configuration (engine, URIs, model, defaults)
+│   ├── config.py               # Configuration (engine, model, defaults)
 │   ├── embedding.py            # Embedder class (sentence-transformers)
-│   ├── memory.py               # RaggerMemory facade/factory (lazy backend import)
+│   ├── memory.py               # RaggerMemory facade/factory
 │   ├── server.py               # HTTP server
 │   ├── mcp_server.py           # MCP JSON-RPC server
-│   ├── cli.py                  # Command-line interface
-│   └── backend/                # Storage backends
-│       ├── __init__.py
-│       ├── base.py             # MemoryBackend ABC (NumPy cosine similarity)
-│       ├── mongo.py            # MongoBackend (MongoDB) — deprecated, removal planned for v0.5.0
-│       └── sqlite.py           # SqliteBackend (SQLite)
+│   └── cli.py                  # Command-line interface
 ├── ragger.py                   # Entry point (chmod +x)
 ├── requirements.txt            # Python dependencies
 └── README.md
@@ -330,8 +326,46 @@ The base class handles search via `get_all_embeddings()` + NumPy cosine
 similarity. Backends can override `search()` if they support native vector
 search (e.g., MongoDB Atlas `$vectorSearch`).
 
-Adding a new backend (Qdrant, Pinecone, etc.) requires implementing these
-four methods and adding a config section in `config.py`.
+### Writing a Custom Backend
+
+To add a new storage backend (e.g., Postgres, Qdrant):
+
+1. Create a new file (e.g., `ragger_memory/postgres_backend.py`)
+2. Inherit from `MemoryBackend` in `backend.py`
+3. Implement the four required methods:
+
+```python
+from .backend import MemoryBackend
+
+class PostgresBackend(MemoryBackend):
+    def __init__(self, embedder, connection_string=None):
+        super().__init__(embedder)
+        # Your connection setup here
+
+    def store_raw(self, text, embedding, metadata, timestamp) -> str:
+        """Persist a document. Return its ID as a string."""
+        ...
+
+    def load_all_embeddings(self) -> tuple[list, list, np.ndarray, list, list]:
+        """Return (ids, texts, embeddings_matrix, metadata_list, timestamps)."""
+        ...
+
+    def count(self) -> int:
+        """Return total document count."""
+        ...
+
+    def close(self):
+        """Clean up connections."""
+        ...
+```
+
+4. Register it in `memory.py`'s factory and add config to `config.py`
+
+The base class provides vector search (NumPy cosine similarity), hybrid
+BM25 blending, collection filtering, usage tracking hooks, and query
+logging — your backend only needs to handle storage and retrieval.
+
+For the C++ port, backends are compiled in rather than dynamically loaded.
 
 ## How It Works
 

@@ -16,8 +16,8 @@ class TestRaggerMemoryInit:
     @patch('ragger_memory.memory.Embedder')
     def test_default_engine_is_sqlite(self, mock_embedder_cls):
         mock_embedder_cls.return_value = MagicMock()
-        with patch('ragger_memory.memory.STORAGE_ENGINE', 'sqlite'):
-            with patch('ragger_memory.backend.sqlite.SqliteBackend') as mock_backend:
+        with patch('ragger_memory.config.STORAGE_ENGINE', 'sqlite'):
+            with patch('ragger_memory.sqlite_backend.SqliteBackend') as mock_backend:
                 mem = RaggerMemory()
                 assert mem.engine == "sqlite"
     

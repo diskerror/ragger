@@ -13,8 +13,8 @@ import numpy as np
 
 import os
 
-from ..bm25 import BM25Index
-from ..config import QUERY_LOGGING_ENABLED, BM25_ENABLED, BM25_WEIGHT, VECTOR_WEIGHT, BM25_K1, BM25_B, NORMALIZE_HOME_PATH, DEFAULT_COLLECTION
+from .bm25 import BM25Index
+from .config import QUERY_LOGGING_ENABLED, BM25_ENABLED, BM25_WEIGHT, VECTOR_WEIGHT, BM25_K1, BM25_B, NORMALIZE_HOME_PATH, DEFAULT_COLLECTION
 
 # Resolve actual home path once at import time (e.g. "/Volumes/WDBlack2")
 _HOME_DIR = os.path.expanduser("~")

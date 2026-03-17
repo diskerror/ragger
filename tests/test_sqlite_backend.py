@@ -9,7 +9,7 @@ import sqlite3
 import numpy as np
 import pytest
 
-from ragger_memory.backend.sqlite import SqliteBackend
+from ragger_memory.sqlite_backend import SqliteBackend
 
 
 class TestSqliteSchema:

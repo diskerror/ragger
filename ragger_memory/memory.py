@@ -2,14 +2,13 @@
 RaggerMemory - Factory facade for backend-agnostic memory storage
 
 Stores text with embeddings. Performs vector similarity search.
-Supports multiple backends (MongoDB, SQLite) via inheritance.
+Backends inherit from MemoryBackend (backend.py).
 """
 
 import logging
 from typing import Optional, Dict, Any, List
 
 from .embedding import Embedder
-from .config import STORAGE_ENGINE
 
 logger = logging.getLogger(__name__)
 
@@ -22,27 +21,26 @@ class RaggerMemory:
         Initialize memory store with appropriate backend
         
         Args:
-            uri: Connection URI (MongoDB) or file path (SQLite).
-                 Defaults to the value in config for the chosen engine.
-            engine: Storage engine ("mongodb" or "sqlite").
+            uri: File path for SQLite database.
+                 Defaults to the value in config.
+            engine: Storage engine (currently "sqlite").
                     Defaults to config.STORAGE_ENGINE.
         """
+        from .config import STORAGE_ENGINE
         self.engine = engine or STORAGE_ENGINE
         
         # Create embedder (shared across all backends)
         embedder = Embedder()
         
-        # Lazy-import the chosen backend to avoid pulling in optional deps
-        if self.engine == "mongodb":
-            from .backend.mongo import MongoBackend
-            self._backend = MongoBackend(embedder, uri)
-            logger.info("Using MongoDB backend")
-        elif self.engine == "sqlite":
-            from .backend.sqlite import SqliteBackend
+        if self.engine == "sqlite":
+            from .sqlite_backend import SqliteBackend
             self._backend = SqliteBackend(embedder, uri)
             logger.info("Using SQLite backend")
         else:
-            raise ValueError(f"Unknown storage engine: {self.engine}")
+            raise ValueError(
+                f"Unknown storage engine: {self.engine}. "
+                f"See backend.py for how to implement a custom backend."
+            )
     
     def store(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> str:
         """

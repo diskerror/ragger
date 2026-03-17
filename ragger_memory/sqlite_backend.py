@@ -10,8 +10,8 @@ from typing import List, Dict
 
 import numpy as np
 
-from .base import MemoryBackend
-from ..config import SQLITE_PATH, SQLITE_MEMORIES_TABLE, SQLITE_QUERY_LOG_TABLE, SQLITE_USAGE_TABLE, USAGE_TRACKING_ENABLED
+from .backend import MemoryBackend
+from .config import SQLITE_PATH, SQLITE_MEMORIES_TABLE, SQLITE_QUERY_LOG_TABLE, SQLITE_USAGE_TABLE, USAGE_TRACKING_ENABLED
 
 logger = logging.getLogger(__name__)
 

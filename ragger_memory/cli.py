@@ -16,84 +16,17 @@ from .config import DEFAULT_SEARCH_LIMIT, DEFAULT_MIN_SCORE, MINIMUM_CHUNK_SIZE
 
 logger = logging.getLogger(__name__)
 
-VALID_ENGINES = ("mongodb", "sqlite")
-
-
 def convert_backend(source_engine: str, dest_engine: str):
     """
     Copy all memories from one backend to another.
     Embeddings are copied as-is (no re-encoding).
-
-    Args:
-        source_engine: Source backend name ("mongodb" or "sqlite")
-        dest_engine: Destination backend name ("mongodb" or "sqlite")
+    
+    Note: With MongoDB removed, this is mainly useful for migrating
+    between SQLite databases or future backends.
     """
-    from .embedding import Embedder
-    from datetime import datetime
-
-    if source_engine == dest_engine:
-        print(f"Source and destination are the same ({source_engine}). Nothing to do.")
-        return
-
-    for eng in (source_engine, dest_engine):
-        if eng not in VALID_ENGINES:
-            print(f"Unknown engine: {eng}. Must be one of {VALID_ENGINES}")
-            return
-
-    # Shared embedder — needed by both backends but won't re-encode anything
-    embedder = Embedder()
-
-    # Open source
-    if source_engine == "mongodb":
-        from .backend.mongo import MongoBackend
-        source = MongoBackend(embedder)
-    else:
-        from .backend.sqlite import SqliteBackend
-        source = SqliteBackend(embedder)
-
-    # Open destination
-    if dest_engine == "mongodb":
-        from .backend.mongo import MongoBackend
-        dest = MongoBackend(embedder)
-    else:
-        from .backend.sqlite import SqliteBackend
-        dest = SqliteBackend(embedder)
-
-    src_count = source.count()
-    if src_count == 0:
-        print(f"Source ({source_engine}) is empty. Nothing to convert.")
-        source.close()
-        dest.close()
-        return
-
-    print(f"Converting {src_count} memories: {source_engine} → {dest_engine}")
-
-    ids, texts, embeddings, metadata_list, timestamps = source.load_all_embeddings()
-
-    copied = 0
-    for i in range(len(ids)):
-        # Normalize timestamp to datetime if it's a string
-        ts = timestamps[i]
-        if isinstance(ts, str):
-            ts = datetime.fromisoformat(ts)
-        elif ts is None:
-            from datetime import timezone
-            ts = datetime.now(timezone.utc)
-
-        dest.store_raw(
-            text=texts[i],
-            embedding=embeddings[i].tolist(),
-            metadata=metadata_list[i],
-            timestamp=ts
-        )
-        copied += 1
-        if copied % 500 == 0:
-            print(f"  {copied}/{src_count}...")
-
-    print(f"✓ Converted {copied} memories from {source_engine} to {dest_engine}")
-
-    source.close()
-    dest.close()
+    print("Backend conversion is not currently available.")
+    print("Only SQLite is supported. To migrate data, use export/import.")
+    return
 
 
 def import_file(

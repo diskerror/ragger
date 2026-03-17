@@ -1,18 +1,13 @@
 """
-Ragger Memory - Backend-agnostic RAG memory store for OpenClaw
+Ragger Memory - Backend-agnostic RAG memory store
 
-Supports multiple storage backends (MongoDB, SQLite) via inheritance.
+Stores text with local embeddings and performs hybrid vector + BM25 search.
+SQLite backend included; see backend.py for implementing custom backends.
 
 Usage:
     from ragger_memory import RaggerMemory
     
-    # Use default backend from config
     memory = RaggerMemory()
-    
-    # Or specify backend explicitly
-    memory = RaggerMemory(engine="sqlite")
-    memory = RaggerMemory(engine="mongodb", uri="mongodb://localhost:27017/")
-    
     memory.store("Some important fact")
     results = memory.search("important")
 """
@@ -20,13 +15,10 @@ Usage:
 from .memory import RaggerMemory
 from .config import (
     STORAGE_ENGINE,
-    MONGODB_URI,
     SQLITE_PATH,
-    MONGODB_DB_NAME,
-    MONGODB_COLLECTION,
     EMBEDDING_MODEL,
     EMBEDDING_DIMENSIONS
 )
 
 __all__ = ['RaggerMemory']
-__version__ = '0.3.1'
+__version__ = '0.5.0'

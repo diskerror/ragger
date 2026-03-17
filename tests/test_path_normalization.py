@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from ragger_memory.backend.base import MemoryBackend, _HOME_PREFIX
+from ragger_memory.backend import MemoryBackend, _HOME_PREFIX
 
 
 class TestPathNormalization:

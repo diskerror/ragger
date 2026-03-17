@@ -46,7 +46,7 @@ def tmp_db(tmp_path):
 @pytest.fixture
 def sqlite_backend(mock_embedder, tmp_db):
     """Provide a fresh SqliteBackend with mock embedder and temp DB."""
-    from ragger_memory.backend.sqlite import SqliteBackend
+    from ragger_memory.sqlite_backend import SqliteBackend
     backend = SqliteBackend(mock_embedder, tmp_db)
     yield backend
     backend.close()

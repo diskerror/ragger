@@ -8,14 +8,7 @@ DEFAULT_HOST = '127.0.0.1'
 DEFAULT_PORT = 8432
 
 # --- Engine selection ---
-STORAGE_ENGINE = "sqlite"  # "mongodb" or "sqlite"
-
-# --- MongoDB backend ---
-MONGODB_URI = "mongodb://localhost:27017/"
-MONGODB_DB_NAME = "ragger"
-MONGODB_COLLECTION = "memories"
-MONGODB_QUERY_LOG_COLLECTION = "query_log"
-MONGODB_USAGE_COLLECTION = "memory_usage"
+STORAGE_ENGINE = "sqlite"
 
 # --- SQLite backend ---
 SQLITE_PATH = "~/.local/share/ragger/memories.db"

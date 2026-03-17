@@ -1,9 +1,6 @@
-# Core (always required)
+# Core
 sentence-transformers
 torch
 numpy
-
-# MongoDB backend (optional — only needed if STORAGE_ENGINE = "mongodb")
-pymongo>=4.0
 
 # SQLite backend uses Python stdlib — no extra deps
