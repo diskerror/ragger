@@ -274,11 +274,13 @@ Examples:
         level = logging.INFO
     else:
         level = logging.WARNING
+    log_dir = Path("~/.ragger").expanduser()
+    log_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=level,
         format='%(asctime)s [%(levelname)s] %(message)s',
         handlers=[
-            logging.FileHandler(Path(__file__).parent.parent / 'ragger_memory.log'),
+            logging.FileHandler(log_dir / 'ragger.log'),
             logging.StreamHandler()
         ]
     )
