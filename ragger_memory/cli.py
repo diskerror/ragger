@@ -258,6 +258,7 @@ Examples:
     parser.add_argument('--group-by', type=str, default='date',
                         choices=['date', 'category', 'collection'],
                         help="Grouping for memory export (default: date)")
+    parser.add_argument('--rebuild-bm25', action='store_true', help="Rebuild the BM25 index table from all documents")
     parser.add_argument('--mcp', action='store_true', help="Run as MCP server (JSON-RPC over stdin/stdout)")
     parser.add_argument('--verbose', '-v', action='store_true', help="Verbose logging")
     
@@ -293,6 +294,16 @@ Examples:
     
     if args.convert:
         convert_backend(args.convert[0], args.convert[1])
+        return
+    
+    if args.rebuild_bm25:
+        from .embedding import Embedder
+        from .sqlite_backend import SqliteBackend
+        embedder = Embedder()
+        backend = SqliteBackend(embedder)
+        count = backend.rebuild_bm25_index()
+        print(f"✓ BM25 index rebuilt: {count} documents")
+        backend.close()
         return
 
     if args.export_docs:

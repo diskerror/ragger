@@ -115,10 +115,11 @@ class MemoryBackend(ABC):
         self._embedding_cache = result
         self._cache_count = doc_count
         
-        # Build BM25 index from the same texts
+        # Build BM25 index — from persisted table if available, else from texts
         if BM25_ENABLED and result[1]:
             self._bm25 = BM25Index(k1=BM25_K1, b=BM25_B)
-            self._bm25.build(result[1])  # result[1] = texts
+            if not self._load_bm25_from_storage(result[0]):
+                self._bm25.build(result[1])  # result[1] = texts
         
         return result
     
@@ -355,6 +356,19 @@ class MemoryBackend(ABC):
         Optional query logging. Override in backends that support it, or no-op.
         """
         pass
+    
+    def _load_bm25_from_storage(self, ids: list) -> bool:
+        """
+        Optional: load BM25 index from persistent storage.
+        Override in backends that support it.
+        
+        Args:
+            ids: List of document IDs (same order as embeddings)
+        
+        Returns:
+            True if index was loaded from storage, False to fall back to build()
+        """
+        return False
     
     def _track_search_usage(self, results: List[Dict]):
         """

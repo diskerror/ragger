@@ -26,6 +26,7 @@ class TestSqliteSchema:
         assert "memories" in tables
         assert "query_log" in tables
         assert "memory_usage" in tables
+        assert "bm25_index" in tables
     
     def test_wal_mode_enabled(self, sqlite_backend, tmp_db):
         """WAL journal mode should be active."""
@@ -266,3 +267,91 @@ class TestSqliteQueryLog:
         assert "num_results" in results
         timing = json.loads(row[2])
         assert "total_ms" in timing
+
+
+class TestBM25IndexPersistence:
+    """Tests for persistent BM25 index table."""
+    
+    def test_store_indexes_tokens(self, sqlite_backend):
+        """Storing a document should populate bm25_index."""
+        sqlite_backend.store("the quick brown fox jumps", {"collection": "memory"})
+        
+        rows = sqlite_backend.conn.execute(
+            "SELECT token, term_freq FROM bm25_index"
+        ).fetchall()
+        tokens = {row[0]: row[1] for row in rows}
+        
+        # "the" is a stop word, should not be indexed
+        assert "the" not in tokens
+        assert "quick" in tokens
+        assert tokens["quick"] == 1
+    
+    def test_store_counts_term_frequency(self, sqlite_backend):
+        """Repeated terms should have correct frequency."""
+        sqlite_backend.store("fox fox fox dog dog", {"collection": "memory"})
+        
+        rows = sqlite_backend.conn.execute(
+            "SELECT token, term_freq FROM bm25_index"
+        ).fetchall()
+        tokens = {row[0]: row[1] for row in rows}
+        
+        assert tokens["fox"] == 3
+        assert tokens["dog"] == 2
+    
+    def test_cascade_delete_bm25(self, sqlite_backend):
+        """Deleting a memory should cascade-delete its BM25 index rows."""
+        mem_id = sqlite_backend.store("cascade test tokens here", {"collection": "memory"})
+        
+        count_before = sqlite_backend.conn.execute(
+            "SELECT COUNT(*) FROM bm25_index"
+        ).fetchone()[0]
+        assert count_before > 0
+        
+        sqlite_backend.conn.execute(
+            f"DELETE FROM memories WHERE id = ?", (int(mem_id),)
+        )
+        sqlite_backend.conn.commit()
+        
+        count_after = sqlite_backend.conn.execute(
+            "SELECT COUNT(*) FROM bm25_index"
+        ).fetchone()[0]
+        assert count_after == 0
+    
+    def test_bm25_index_count(self, sqlite_backend):
+        """bm25_index_count should match number of stored docs."""
+        assert sqlite_backend.bm25_index_count() == 0
+        
+        sqlite_backend.store("first document", {"collection": "memory"})
+        sqlite_backend.store("second document", {"collection": "memory"})
+        
+        assert sqlite_backend.bm25_index_count() == 2
+    
+    def test_rebuild_bm25_index(self, sqlite_backend):
+        """rebuild_bm25_index should repopulate from all documents."""
+        sqlite_backend.store("rebuild test one", {"collection": "memory"})
+        sqlite_backend.store("rebuild test two", {"collection": "memory"})
+        
+        # Clear the index manually
+        sqlite_backend.conn.execute("DELETE FROM bm25_index")
+        sqlite_backend.conn.commit()
+        assert sqlite_backend.bm25_index_count() == 0
+        
+        # Rebuild
+        count = sqlite_backend.rebuild_bm25_index()
+        assert count == 2
+        assert sqlite_backend.bm25_index_count() == 2
+    
+    def test_load_bm25_index(self, sqlite_backend):
+        """load_bm25_index should return per-doc token frequencies."""
+        sqlite_backend.store("alpha beta gamma", {"collection": "memory"})
+        
+        data = sqlite_backend.load_bm25_index()
+        assert data['count'] == 1
+        
+        # Should have one doc's worth of token freqs
+        doc_freqs = data['doc_freqs']
+        assert len(doc_freqs) == 1
+        tf = list(doc_freqs.values())[0]
+        assert "alpha" in tf
+        assert "beta" in tf
+        assert "gamma" in tf
