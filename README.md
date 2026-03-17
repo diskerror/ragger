@@ -317,18 +317,18 @@ Ragger/
 
 ### Backend Architecture
 
-Storage backends inherit from `MemoryBackend` (in `backend/base.py`), which
+Storage backends inherit from `MemoryBackend` (in `backend.py`), which
 provides the default NumPy-based cosine similarity search. Each backend
 implements:
 
-- `store()` — Persist a document with text, embedding, and metadata
-- `get_all_embeddings()` — Load all embeddings for brute-force search
+- `store_raw()` — Persist a document with text, embedding, and metadata
+- `load_all_embeddings()` — Load all embeddings for brute-force search
 - `count()` — Return the number of stored documents
-- `log_query()` — Record search queries for quality analysis
+- `close()` — Clean up connections
 
-The base class handles search via `get_all_embeddings()` + NumPy cosine
-similarity. Backends can override `search()` if they support native vector
-search (e.g., MongoDB Atlas `$vectorSearch`).
+The base class handles search via `load_all_embeddings()` + NumPy cosine
+similarity, plus hybrid BM25 blending, collection filtering, usage
+tracking hooks, and query logging.
 
 ### Writing a Custom Backend
 
@@ -408,8 +408,9 @@ matching with semantic vector search for better recall:
    in the retrieved text.
 
 The BM25 implementation is pure Python (no external dependencies). The
-BM25 index is built from cached texts on first search (~230ms for 14K
-docs) and reused across subsequent searches.
+BM25 index is persisted in a SQLite table (`bm25_index`) and loaded on
+first search. New documents are indexed automatically on store. Use
+`--rebuild-bm25` to rebuild the index after migration or bulk changes.
 
 Hybrid search can be toggled and tuned via config:
 
@@ -421,31 +422,7 @@ Hybrid search can be toggled and tuned via config:
 | `BM25_K1` | `1.5` | BM25 term frequency saturation |
 | `BM25_B` | `0.75` | BM25 document length normalization |
 
-### Potential Upgrades
-
-These are natural next steps if you want to improve retrieval quality:
-
-- **Re-ranking:** After retrieving top-k candidates, re-score them with a
-  cross-encoder model (e.g. `cross-encoder/ms-marco-MiniLM-L-6-v2`) for
-  more accurate relevance ranking. Slower per query but significantly
-  better precision.
-
-- **Query expansion / HyDE:** Generate a hypothetical answer to the query
-  using the LLM, then embed *that* for retrieval. Often finds results that
-  the original terse query would miss.
-
-- **Memory lifecycle (decay/promotion):** Usage tracking is already in place.
-  A natural extension would be to decay memories that are never accessed and
-  promote frequently-used ones — mimicking human memory consolidation.
-
-- **Native vector search:** MongoDB's `$vectorSearch` (via mongot) or
-  purpose-built vector databases (Qdrant, etc.) would move similarity
-  search into the database engine, eliminating the need to load all
-  embeddings into Python. Worthwhile for very large corpora (100K+).
-
-None of these are necessary at small scale (<50K chunks), but they
-become worthwhile as your corpus grows or retrieval precision becomes
-critical.
+See [ROADMAP.md](ROADMAP.md) for potential upgrades and future plans.
 
 ## Configuration
 
@@ -467,8 +444,6 @@ Edit `ragger_memory/config.py` or set environment variables:
 
 ## Database Schema
 
-### SQLite
-
 ```sql
 CREATE TABLE memories (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -482,9 +457,15 @@ CREATE TABLE memory_usage (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     memory_id   INTEGER NOT NULL REFERENCES memories(id)
                 ON DELETE CASCADE ON UPDATE CASCADE,
-    query       TEXT NOT NULL,
-    score       REAL NOT NULL,
     timestamp   TEXT NOT NULL
+);
+
+CREATE TABLE bm25_index (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_id   INTEGER NOT NULL REFERENCES memories(id)
+                ON DELETE CASCADE ON UPDATE CASCADE,
+    token       TEXT NOT NULL,
+    term_freq   INTEGER NOT NULL
 );
 ```
 
@@ -497,29 +478,31 @@ using `»` separators for deeper nesting.
 Search queries are logged to a separate collection/table for quality
 analysis. Each query records timing, result scores, and quality metrics.
 
-```javascript
-// query_log table
+```sql
+-- query_log table
+-- Each row stores a JSON blob with query details and timing
+CREATE TABLE query_log (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,     -- ISO 8601
+    query     TEXT NOT NULL,     -- the search query
+    results   TEXT,              -- JSON: scores, sources, quality metrics
+    timing    TEXT               -- JSON: embedding_ms, search_ms, total_ms, corpus_size
+);
+```
+
+Example `results` JSON:
+
+```json
 {
-  _id: ObjectId,
-  timestamp: ISODate("2026-02-26T20:22:39.343Z"),
-  query: "authentication flow",
-  limit: 3,
-  min_score: 0.0,
-  num_results: 3,
-  top_score: 0.6461,
-  score_gap: 0.0415,       // difference between #1 and #2 scores
-  below_threshold: false,   // true if top_score < 0.4
-  results: [
-    { chunk_id: "699f8b41...", score: 0.6461, source: "API Guide.md", chunk_size: 415 },
-    { chunk_id: "699f8b41...", score: 0.6046, source: "Auth Reference.md", chunk_size: 309 }
-  ],
-  timing: {
-    embedding_ms: 11.3,     // time to embed the query
-    search_ms: 0.3,         // time for cosine similarity
-    total_ms: 30.9,         // end-to-end
-    corpus_size: 735        // chunks searched
-  },
-  feedback: null            // reserved for manual relevance rating
+  "query": "authentication flow",
+  "limit": 3,
+  "num_results": 3,
+  "top_score": 0.6461,
+  "score_gap": 0.0415,
+  "below_threshold": false,
+  "results": [
+    {"chunk_id": "42", "score": 0.6461, "source": "API Guide.md", "chunk_size": 415}
+  ]
 }
 ```
 
