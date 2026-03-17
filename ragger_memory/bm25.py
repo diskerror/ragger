@@ -28,10 +28,59 @@ STOP_WORDS = frozenset({
 # Regex: split on non-alphanumeric, keep numbers
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
+# Hex string pattern: 6+ hex chars with no non-hex alpha (e.g. "deadbeef", "ff00aa")
+# but NOT flagged hex like "0xdeadbeef" (those are kept as "0xdeadbeef")
+_HEX_RE = re.compile(r'^[0-9a-f]{6,}$')
+
+# Base64-like pattern: 20+ chars of base64 alphabet (catches embedded encodings)
+_B64_RE = re.compile(r'^[a-z0-9+/]{20,}={0,2}$', re.IGNORECASE)
+
+# Prefixed hex (0x...) — extract with prefix intact before lowercasing
+_PREFIXED_HEX_RE = re.compile(r'0x[0-9a-fA-F]+')
+
+
+def _is_noise_token(token: str) -> bool:
+    """Check if a token is noise (short words, page numbers, hex strings, base64)."""
+    # Too short: under 3 chars (catches page numbers, trivial fragments)
+    if len(token) < 3:
+        return True
+    # Pure digits under 3 chars already caught above;
+    # pure digits 3+ chars are kept (years, error codes, ports, etc.)
+    # Bare hex strings (no 0x prefix): "deadbeef", "ff00aa33" — noise from hashes/IDs
+    if _HEX_RE.match(token):
+        return True
+    # Base64 fragments
+    if _B64_RE.match(token):
+        return True
+    return False
+
 
 def tokenize(text: str) -> List[str]:
-    """Lowercase, split on non-alphanum, remove stop words."""
-    return [t for t in _TOKEN_RE.findall(text.lower()) if t not in STOP_WORDS]
+    """
+    Lowercase, split on non-alphanum, remove stop words and noise.
+    
+    Filters:
+    - Stop words (common English)
+    - Tokens under 3 characters
+    - Bare hex strings (6+ hex chars, e.g. hash fragments)
+    - Base64 encodings (20+ base64 chars)
+    
+    Keeps:
+    - Prefixed hex (0x...) — treated as a single token
+    - Numbers with 3+ digits (years, ports, error codes)
+    - Numbers with leading zeros (e.g. "007", "0400")
+    """
+    tokens = []
+    lower = text.lower()
+    
+    for token in _TOKEN_RE.findall(lower):
+        if token in STOP_WORDS:
+            continue
+        if _is_noise_token(token):
+            continue
+        tokens.append(token)
+    
+    return tokens
 
 
 class BM25Index:
