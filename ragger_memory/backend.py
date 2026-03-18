@@ -15,6 +15,7 @@ import os
 
 from .bm25 import BM25Index
 from .config import QUERY_LOG_ENABLED, BM25_ENABLED, BM25_WEIGHT, VECTOR_WEIGHT, BM25_K1, BM25_B, NORMALIZE_HOME_PATH, DEFAULT_COLLECTION
+from . import lang
 
 # Resolve actual home path once at import time (e.g. "/Volumes/WDBlack2")
 _HOME_DIR = os.path.expanduser("~")
@@ -104,13 +105,13 @@ class MemoryBackend(ABC):
         if self._embedding_cache is not None and self._cache_count == doc_count:
             return self._embedding_cache
         
-        logger.info(f"Loading {doc_count} embeddings from storage...")
+        logger.info(lang.MSG_LOADING_EMBEDDINGS.format(count=doc_count))
         
         result = self.load_all_embeddings()
         
         if result[0]:  # if ids list is not empty
             embeddings = result[2]
-            logger.info(f"Loaded {len(result[0])} embeddings ({embeddings.nbytes / 1024:.0f} KB)")
+            logger.info(lang.MSG_LOADED_EMBEDDINGS.format(count=len(result[0]), size_kb=embeddings.nbytes / 1024))
         
         self._embedding_cache = result
         self._cache_count = doc_count
@@ -174,11 +175,11 @@ class MemoryBackend(ABC):
             memory_id = self.store_raw(text, embedding, meta, timestamp)
             self._invalidate_cache()
             
-            logger.info(f"Stored memory: {memory_id}")
+            logger.info(lang.MSG_STORED_MEMORY.format(id=memory_id))
             return memory_id
             
         except Exception as e:
-            logger.error(f"Failed to store memory: {e}")
+            logger.error(lang.ERR_STORE_FAILED.format(error=e))
             raise
     
     def search(
@@ -208,7 +209,7 @@ class MemoryBackend(ABC):
             ids, texts, embeddings, metadata, timestamps = self._load_embeddings_cached()
             
             if len(ids) == 0:
-                logger.info("No memories stored yet")
+                logger.info(lang.MSG_NO_MEMORIES)
                 return {"results": [], "timing": {}}
             
             # Filter by collection
@@ -224,7 +225,7 @@ class MemoryBackend(ABC):
                 mask = np.ones(len(ids), dtype=bool)
             
             if not mask.any():
-                logger.info(f"No memories in collections {collections}")
+                logger.info(lang.MSG_NO_MEMORIES_IN_COLLECTIONS.format(collections=collections))
                 return {"results": [], "timing": {"corpus_size": len(ids), "filtered_size": 0}}
             
             # Apply mask to get filtered indices
@@ -333,13 +334,12 @@ class MemoryBackend(ABC):
             self._track_search_usage(results)
             
             logger.info(
-                f"Search returned {len(results)} results "
-                f"(embed: {embedding_ms}ms, search: {search_ms}ms, total: {total_ms}ms)"
+                lang.MSG_SEARCH_RESULTS.format(count=len(results), ms=total_ms)
             )
             return {"results": results, "timing": timing}
             
         except Exception as e:
-            logger.error(f"Search failed: {e}")
+            logger.error(lang.ERR_SEARCH_FAILED.format(error=e))
             raise
     
     def _log_query(

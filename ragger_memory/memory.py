@@ -9,6 +9,7 @@ import logging
 from typing import Optional, Dict, Any, List
 
 from .embedding import Embedder
+from . import lang
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +36,10 @@ class RaggerMemory:
         if self.engine == "sqlite":
             from .sqlite_backend import SqliteBackend
             self._backend = SqliteBackend(embedder, uri)
-            logger.info("Using SQLite backend")
+            logger.info(lang.MSG_USING_SQLITE)
         else:
             raise ValueError(
-                f"Unknown storage engine: {self.engine}. "
-                f"See backend.py for how to implement a custom backend."
+                lang.ERR_UNKNOWN_ENGINE.format(engine=self.engine)
             )
     
     def store(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> str:

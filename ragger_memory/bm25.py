@@ -9,6 +9,8 @@ import re
 import logging
 from typing import List, Optional
 
+from . import lang
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -150,8 +152,10 @@ class BM25Index:
             )
         
         logger.info(
-            f"BM25 index built: {self._doc_count} docs, "
-            f"{len(self._idf)} unique terms, avgdl={self._avgdl:.1f}"
+            lang.MSG_BM25_BUILT.format(
+                doc_count=self._doc_count,
+                vocab_size=len(self._idf)
+            )
         )
     
     def score(self, query: str, indices: Optional[np.ndarray] = None) -> np.ndarray:

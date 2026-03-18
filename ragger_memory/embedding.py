@@ -8,6 +8,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 
 from .config import EMBEDDING_MODEL, MODEL_CACHE_DIR
+from . import lang
 
 logger = logging.getLogger(__name__)
 
@@ -37,32 +38,24 @@ class Embedder:
         
         if model_cache_path.is_symlink() and not model_cache_path.exists():
             import os
-            return None, (
-                f"Model cache directory is a broken symlink:\n"
+            return None, lang.ERR_MODEL_CACHE_BROKEN_SYMLINK.format(path=
                 f"  {MODEL_CACHE_DIR} -> {os.readlink(str(model_cache_path))}\n"
                 f"  The target drive may be offline or unmounted."
             )
         
         if not model_cache_path.exists():
-            return None, (
-                f"Model cache directory not found: {MODEL_CACHE_DIR}\n"
-                f"Run './ragger.py --update-model' to download the embedding model."
-            )
+            return None, lang.ERR_MODEL_CACHE_NOT_FOUND.format(path=MODEL_CACHE_DIR)
         
         if model_hub_dir.is_dir():
             snapshots = list(model_hub_dir.iterdir())
             if snapshots:
                 return str(snapshots[0]), None
             else:
-                return None, (
-                    f"Model '{EMBEDDING_MODEL}' has no snapshots in {model_hub_dir}\n"
-                    f"Run './ragger.py --update-model' to download it."
-                )
+                return None, lang.ERR_MODEL_NO_SNAPSHOTS.format(
+                    model=EMBEDDING_MODEL, path=model_hub_dir)
         else:
-            return None, (
-                f"Model '{EMBEDDING_MODEL}' not found in {MODEL_CACHE_DIR}\n"
-                f"Run './ragger.py --update-model' to download it."
-            )
+            return None, lang.ERR_MODEL_NOT_FOUND.format(
+                model=EMBEDDING_MODEL, path=MODEL_CACHE_DIR)
     
     def _load_model(self):
         """Load sentence transformer model from local snapshot only (no network)"""

@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 http_logger = logging.getLogger('ragger_memory.http')
 
 from .config import DEFAULT_HOST, DEFAULT_PORT
+from . import lang
 
 # Module-level reference so the handler can access it
 _memory = None
@@ -76,7 +77,7 @@ class RaggerHandler(BaseHTTPRequestHandler):
                 self._respond(404, {"error": f"unknown endpoint: {self.path}"})
         
         except Exception as e:
-            logger.error(f"Request error: {e}")
+            logger.error(lang.ERR_REQUEST.format(error=e))
             self._respond(500, {"error": str(e)})
     
     def do_GET(self):
@@ -99,13 +100,13 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     _memory = RaggerMemory()
     
     server = HTTPServer((host, port), RaggerHandler)
-    print(f"Ragger Memory server running on http://{host}:{port}")
-    print(f"Endpoints:")
+    print(lang.MSG_SERVER_RUNNING.format(host=host, port=port))
+    print(lang.MSG_SERVER_ENDPOINTS)
     print(f"  POST /store   - {{\"text\": \"...\", \"metadata\": {{...}}}}")
     print(f"  POST /search  - {{\"query\": \"...\", \"limit\": 5}}")
     print(f"  GET  /count   - memory count")
     print(f"  GET  /health  - health check")
-    print(f"Press Ctrl+C to stop.")
+    print(lang.MSG_SERVER_STOP)
     
     try:
         server.serve_forever()

@@ -1,116 +1,84 @@
 """
 Command-line interface for Ragger Memory
+
+Verb-style CLI: ragger <verb> [options] [args]
+No verb or 'help' prints usage.
 """
 
 import argparse
 import logging
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Optional
 
 from .memory import RaggerMemory
 from .mcp_server import run_mcp_server
-from .server import run_server, DEFAULT_HOST, DEFAULT_PORT
-from .config import DEFAULT_SEARCH_LIMIT, DEFAULT_MIN_SCORE, MINIMUM_CHUNK_SIZE
+from .server import run_server
+from .config import get_config
 
 logger = logging.getLogger(__name__)
-
-def convert_backend(source_engine: str, dest_engine: str):
-    """
-    Copy all memories from one backend to another.
-    Embeddings are copied as-is (no re-encoding).
-    
-    Note: With MongoDB removed, this is mainly useful for migrating
-    between SQLite databases or future backends.
-    """
-    print("Backend conversion is not currently available.")
-    print("Only SQLite is supported. To migrate data, use export/import.")
-    return
 
 
 def import_file(
     memory: RaggerMemory,
     filepath: str,
-    min_chunk_size: int = MINIMUM_CHUNK_SIZE,
+    min_chunk_size: int = 300,
     metadata: Optional[dict] = None
 ):
     """
     Import a file into memory with paragraph-aware chunking
-    
+
     Args:
         memory: RaggerMemory instance
         filepath: Path to file
-        min_chunk_size: Merge short paragraphs until at least this size (default: 500)
+        min_chunk_size: Merge short paragraphs until at least this size
         metadata: Additional metadata to attach
     """
     path = Path(filepath)
     if not path.exists():
         raise FileNotFoundError(f"File not found: {filepath}")
-    
+
     text = path.read_text()
 
     # Strip embedded base64 image data (noise for text embeddings)
-    text = re.sub(r'!\[[^\]]*\]\(data:[^)]+\)', '', text)  # ![alt](data:...)
-    text = re.sub(r'data:image/[^;]+;base64,[A-Za-z0-9+/=]+', '', text)  # bare data URIs
+    text = re.sub(r'!\[[^\]]*\]\(data:[^)]+\)', '', text)
+    text = re.sub(r'data:image/[^;]+;base64,[A-Za-z0-9+/=]+', '', text)
 
-    # Keep relative image references as-is (e.g. O_artifacts/image_000007_00fb...png)
-    # Path rewriting happens at query time, not import time — see TOOLS.md
-
-    # Collapse OCR multi-space artifacts to single space (per line, preserving structure)
+    # Collapse OCR multi-space artifacts to single space
     lines = text.split('\n')
     lines = [re.sub(r'  +', ' ', line) for line in lines]
     text = '\n'.join(lines)
 
-    text = re.sub(r'\n{3,}', '\n\n', text)  # collapse extra blank lines left behind
+    text = re.sub(r'\n{3,}', '\n\n', text)
 
     source_meta = {"source": str(path)}
     if metadata:
         source_meta.update(metadata)
-    
-    # Split on paragraph boundaries with heading-aware chunking.
-    #
-    # Headings are tracked as a breadcrumb trail (e.g. "Intro - Setup - Step 1").
-    # Each chunk gets:
-    #   - The current heading(s) prepended to the text (improves embeddings)
-    #   - A "section" metadata field with the breadcrumb trail
-    #
-    # Paragraphs are kept whole — never split mid-paragraph. Small consecutive
-    # paragraphs under the same heading are merged up to chunk_size.
 
+    # Heading-aware paragraph chunking
     raw_paragraphs = text.split('\n\n')
 
     def _heading_level(line: str) -> int:
-        """Return heading level (1-6) or 0 if not a heading."""
         m = re.match(r'^(#{1,6})\s', line)
         return len(m.group(1)) if m else 0
 
     def _heading_text(line: str) -> str:
-        """Strip '#' prefix from heading line."""
         return re.sub(r'^#{1,6}\s+', '', line).strip()
 
-    # State: breadcrumb stack tracks the current section hierarchy
-    # Each entry is (level, heading_text)
     heading_stack: list[tuple[int, str]] = []
-    pending_headings: list[str] = []  # raw heading lines waiting for body
+    pending_headings: list[str] = []
 
     def _current_section() -> str:
-        """Build breadcrumb from heading stack."""
         return ' » '.join(h[1] for h in heading_stack)
 
     def _current_heading_block() -> str:
-        """Build the full heading chain to prepend to chunk text.
-        
-        Always uses the heading stack (which reflects the full hierarchy).
-        """
         if heading_stack:
             return '\n\n'.join('#' * level + ' ' + txt for level, txt in heading_stack)
         return ''
 
-    # Two-pass: first build (body, heading_block, section) tuples, then chunk them.
-    # Heading block is stored separately so it's only prepended once per chunk
-    # (or when the section changes within a chunk).
-    annotated: list[tuple[str, str, str]] = []  # (body_text, heading_block, section)
+    annotated: list[tuple[str, str, str]] = []
 
     for para in raw_paragraphs:
         para = para.strip()
@@ -119,57 +87,43 @@ def import_file(
 
         level = _heading_level(para)
         if level > 0:
-            # Update the heading stack: pop anything at this level or deeper
             while heading_stack and heading_stack[-1][0] >= level:
                 heading_stack.pop()
             heading_stack.append((level, _heading_text(para)))
             pending_headings.append(para)
         else:
-            # Body paragraph — store with heading context (not yet merged)
             heading_block = _current_heading_block()
             section = _current_section()
             annotated.append((para, heading_block, section))
             pending_headings = []
 
-    # Trailing headings with no body
     if pending_headings:
         section = _current_section()
         annotated.append(('\n\n'.join(pending_headings), '', section))
-        pending_headings = []
 
-    # Chunk annotated paragraphs: merge short paragraphs until the buffer
-    # reaches min_chunk_size, then flush. Paragraphs are NEVER split.
-    # Heading block is prepended only at the start of a chunk or when
-    # the section changes mid-chunk.
-    chunks: list[tuple[str, str]] = []  # (chunk_text, section)
+    chunks: list[tuple[str, str]] = []
     current = ""
     current_section = ""
 
     for body, heading_block, section in annotated:
         if not current:
-            # Start a new buffer — prepend heading block
             current = (heading_block + '\n\n' + body) if heading_block else body
             current_section = section
         elif len(current) >= min_chunk_size:
-            # Buffer has reached minimum — flush it, start new chunk
             chunks.append((current.strip(), current_section))
             current = (heading_block + '\n\n' + body) if heading_block else body
             current_section = section
         else:
-            # Buffer is still short — merge this paragraph in
             if section != current_section and heading_block:
-                # Section changed — insert new heading block
                 current = current + '\n\n' + heading_block + '\n\n' + body
                 current_section = section
             else:
-                # Same section — just append the body
                 current = current + '\n\n' + body
     if current.strip():
         chunks.append((current.strip(), current_section))
 
-    # Filter out empty chunks
     chunks = [(t, s) for t, s in chunks if t]
-    
+
     print(f"Importing {len(chunks)} chunks from {path.name}...")
     for i, (chunk_text, section) in enumerate(chunks, 1):
         chunk_meta = source_meta.copy()
@@ -182,109 +136,141 @@ def import_file(
 
 
 def main():
-    """CLI entry point"""
+    """CLI entry point — verb-style commands"""
+    cfg = get_config()
+
     parser = argparse.ArgumentParser(
-        description="Ragger Memory - MongoDB RAG Memory Store",
+        prog="ragger",
+        description="Ragger Memory — semantic memory store",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+Verbs:
+  serve             Start HTTP server
+  search <query>    Search memories
+  store <text>      Store a memory
+  count             Show memory count
+  import <files>    Import files into memory
+  export            Export memories to files
+  mcp               Run as MCP server (stdin/stdout)
+  rebuild-bm25      Rebuild BM25 index
+  update-model      Download/update embedding model
+  help              Show this help
+
 Examples:
-  # Store a memory
-  ragger --store "The deploy script requires Node 18+"
-  
-  # Search memories (default: searches 'memory' collection only)
-  ragger --search "deployment requirements"
-  
-  # Search specific collections
-  ragger --search "transposition" --collections sibelius
-  ragger --search "instrument ranges" --collections docs reference
-  
-  # Search all collections
-  ragger --search "authentication" --collections '*'
-  
-  # Import a file (default collection: memory)
-  ragger --import-file notes.md
-  
-  # Import into a named collection
-  ragger --import-file api-guide.md --collection docs
-  
-  # Import multiple files
-  ragger --import-file doc1.md doc2.md doc3.md --collection reference
-  
-  # Import with custom minimum chunk size
-  ragger --import-file large_doc.txt --min-chunk-size 500
-  
-  # Run HTTP server (for OpenClaw or any HTTP client)
-  ragger --server
-  ragger --server --host 0.0.0.0 --port 9000
-  
-  # Run as MCP server
-  ragger --mcp
-  
-  # Convert all memories from MongoDB to SQLite
-  ragger --convert mongodb sqlite
-  
-  # Export documents back to files
-  ragger --export-docs docs ./exported/docs/
-  
-  # Export conversation memories
-  ragger --export-memories ./exported/memories/
-  
-  # Export everything
-  ragger --export-all ./exported/
+  ragger serve
+  ragger serve --host 0.0.0.0 --port 9000
+  ragger search "deployment requirements"
+  ragger search "transposition" --collections sibelius
+  ragger store "The deploy script requires Node 18+"
+  ragger count
+  ragger import notes.md --collection docs
+  ragger import doc1.md doc2.md --collection reference
         """
     )
-    
-    parser.add_argument('--store', type=str, help="Store a memory")
-    parser.add_argument('--search', type=str, help="Search memories")
-    parser.add_argument('--import-file', type=str, nargs='+', help="Import one or more files")
-    parser.add_argument('--min-chunk-size', type=int, default=MINIMUM_CHUNK_SIZE, help=f"Merge short paragraphs until at least this size (default: {MINIMUM_CHUNK_SIZE})")
-    parser.add_argument('--collection', type=str, default=None, help="Collection name for import or search (e.g. docs, reference, memory)")
-    parser.add_argument('--collections', type=str, nargs='+', default=None, help="Collections to search (default: memory only; use '*' for all)")
-    parser.add_argument('--limit', type=int, default=DEFAULT_SEARCH_LIMIT, help=f"Max search results (default: {DEFAULT_SEARCH_LIMIT})")
-    parser.add_argument('--min-score', type=float, default=DEFAULT_MIN_SCORE, help=f"Min similarity score (default: {DEFAULT_MIN_SCORE})")
-    parser.add_argument('--count', action='store_true', help="Show number of stored memories")
-    parser.add_argument('--server', action='store_true', help="Run HTTP server")
-    parser.add_argument('--host', type=str, default=DEFAULT_HOST, help=f"HTTP server bind address (default: {DEFAULT_HOST})")
-    parser.add_argument('--port', type=int, default=DEFAULT_PORT, help=f"HTTP server port (default: {DEFAULT_PORT})")
-    parser.add_argument('--update-model', action='store_true', help="Download or update the embedding model")
-    parser.add_argument('--convert', nargs=2, metavar=('FROM', 'TO'),
-                        help="Convert memories between backends (e.g. --convert mongodb sqlite)")
-    parser.add_argument('--export-docs', nargs=2, metavar=('COLLECTION', 'DEST'),
-                        help="Export a document collection back to files")
-    parser.add_argument('--export-memories', type=str, metavar='DEST',
-                        help="Export conversation memories as markdown")
-    parser.add_argument('--export-all', type=str, metavar='DEST',
-                        help="Export everything (docs by collection, memories grouped)")
-    parser.add_argument('--group-by', type=str, default='date',
-                        choices=['date', 'category', 'collection'],
-                        help="Grouping for memory export (default: date)")
-    parser.add_argument('--rebuild-bm25', action='store_true', help="Rebuild the BM25 index table from all documents")
-    parser.add_argument('--mcp', action='store_true', help="Run as MCP server (JSON-RPC over stdin/stdout)")
-    parser.add_argument('--verbose', '-v', action='store_true', help="Verbose logging")
-    
+
+    # Subcommands
+    sub = parser.add_subparsers(dest="verb")
+
+    # --- serve ---
+    p_serve = sub.add_parser("serve", help="Start HTTP server")
+    p_serve.add_argument("--host", type=str, default=cfg["host"],
+                         help=f"Bind address (default: {cfg['host']})")
+    p_serve.add_argument("--port", type=int, default=cfg["port"],
+                         help=f"Port (default: {cfg['port']})")
+
+    # --- search ---
+    p_search = sub.add_parser("search", help="Search memories")
+    p_search.add_argument("query", type=str, help="Search query")
+    p_search.add_argument("--limit", type=int, default=cfg["default_search_limit"],
+                          help=f"Max results (default: {cfg['default_search_limit']})")
+    p_search.add_argument("--min-score", type=float, default=cfg["default_min_score"],
+                          help=f"Min similarity (default: {cfg['default_min_score']})")
+    p_search.add_argument("--collections", type=str, nargs="+", default=None,
+                          help="Collections to search (default: all; use '*' for all)")
+    p_search.add_argument("--collection", type=str, default=None,
+                          help="Single collection to search")
+
+    # --- store ---
+    p_store = sub.add_parser("store", help="Store a memory")
+    p_store.add_argument("text", type=str, help="Text to store")
+    p_store.add_argument("--collection", type=str, default=None,
+                         help="Collection name")
+
+    # --- count ---
+    sub.add_parser("count", help="Show memory count")
+
+    # --- import ---
+    p_import = sub.add_parser("import", help="Import files into memory")
+    p_import.add_argument("files", type=str, nargs="+", help="Files to import")
+    p_import.add_argument("--collection", type=str, default=None,
+                          help="Collection name for imported chunks")
+    p_import.add_argument("--min-chunk-size", type=int,
+                          default=cfg["minimum_chunk_size"],
+                          help=f"Min chunk size (default: {cfg['minimum_chunk_size']})")
+
+    # --- export ---
+    p_export = sub.add_parser("export", help="Export memories to files")
+    p_export.add_argument("mode", choices=["docs", "memories", "all"],
+                          help="What to export")
+    p_export.add_argument("dest", type=str, help="Destination directory")
+    p_export.add_argument("--collection", type=str, default=None,
+                          help="Collection for docs export")
+    p_export.add_argument("--group-by", type=str, default="date",
+                          choices=["date", "category", "collection"],
+                          help="Grouping for memory export")
+
+    # --- mcp ---
+    sub.add_parser("mcp", help="Run as MCP server (JSON-RPC over stdin/stdout)")
+
+    # --- rebuild-bm25 ---
+    sub.add_parser("rebuild-bm25", help="Rebuild BM25 index from all documents")
+
+    # --- update-model ---
+    sub.add_parser("update-model", help="Download/update embedding model")
+
+    # --- help ---
+    sub.add_parser("help", help="Show help")
+
+    # --- Global options ---
+    parser.add_argument("--config-file", type=str, default="",
+                        help="Path to config file")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Verbose logging")
+    parser.add_argument("--version", action="store_true",
+                        help="Show version")
+
     args = parser.parse_args()
-    
+
+    if args.version:
+        from . import __version__
+        print(f"ragger {__version__}")
+        return
+
+    # No verb or 'help' → print help
+    if not args.verb or args.verb == "help":
+        parser.print_help()
+        return
+
     # Configure logging
     from .logs import setup_logging
     setup_logging(
         verbose=args.verbose,
-        server_mode=(hasattr(args, 'server') and args.server)
+        server_mode=(args.verb == "serve")
     )
-    
-    if args.update_model:
+
+    # --- Dispatch ---
+
+    if args.verb == "serve":
+        run_server(args.host, args.port)
+
+    elif args.verb == "mcp":
+        run_mcp_server()
+
+    elif args.verb == "update-model":
         RaggerMemory.download_model()
         print("✓ Model is up to date")
-        return
-    
-    if args.server:
-        run_server(args.host, args.port)
-        return
-    
-    if args.convert:
-        convert_backend(args.convert[0], args.convert[1])
-        return
-    
-    if args.rebuild_bm25:
+
+    elif args.verb == "rebuild-bm25":
         from .embedding import Embedder
         from .sqlite_backend import SqliteBackend
         embedder = Embedder()
@@ -292,54 +278,55 @@ Examples:
         count = backend.rebuild_bm25_index()
         print(f"✓ BM25 index rebuilt: {count} documents")
         backend.close()
-        return
 
-    if args.export_docs:
-        from .export import export_docs
-        export_docs(args.export_docs[0], args.export_docs[1])
-        return
+    elif args.verb == "export":
+        if args.mode == "docs":
+            if not args.collection:
+                print("Error: --collection required for docs export")
+                return
+            from .export import export_docs
+            export_docs(args.collection, args.dest)
+        elif args.mode == "memories":
+            from .export import export_memories
+            export_memories(args.dest, args.group_by)
+        elif args.mode == "all":
+            from .export import export_all
+            export_all(args.dest, args.group_by)
 
-    if args.export_memories:
-        from .export import export_memories
-        export_memories(args.export_memories, args.group_by)
-        return
-
-    if args.export_all:
-        from .export import export_all
-        export_all(args.export_all, args.group_by)
-        return
-
-    if args.mcp:
-        run_mcp_server()
     else:
+        # Commands that need a RaggerMemory instance
         memory = RaggerMemory()
-        
         try:
-            if args.count:
-                print(f"Memories stored: {memory.count()}")
-            
-            elif args.store:
-                memory_id = memory.store(args.store)
-                print(f"✓ Stored: {memory_id}")
-            
-            elif args.import_file:
+            if args.verb == "count":
+                print(memory.count())
+
+            elif args.verb == "store":
+                meta = {}
+                if args.collection:
+                    meta["collection"] = args.collection
+                memory_id = memory.store(args.text, meta if meta else None)
+                print(f"Stored with id: {memory_id}")
+
+            elif args.verb == "import":
                 import_meta = {}
                 if args.collection:
-                    import_meta['collection'] = args.collection
-                for filepath in args.import_file:
-                    import_file(memory, filepath, args.min_chunk_size, import_meta if import_meta else None)
-            
-            elif args.search:
+                    import_meta["collection"] = args.collection
+                for filepath in args.files:
+                    import_file(memory, filepath, args.min_chunk_size,
+                                import_meta if import_meta else None)
+
+            elif args.verb == "search":
                 collections = args.collections or (
                     [args.collection] if args.collection else None
                 )
-                search_result = memory.search(args.search, args.limit, args.min_score, collections)
-                results = search_result["results"]
-                timing = search_result.get("timing", {})
+                result = memory.search(args.query, args.limit,
+                                       args.min_score, collections)
+                results = result["results"]
+                timing = result.get("timing", {})
                 print(f"\nFound {len(results)} results:\n")
                 for i, r in enumerate(results, 1):
                     print(f"{i}. [score: {r['score']:.3f}] {r['text'][:100]}...")
-                    if r.get('metadata'):
+                    if r.get("metadata"):
                         print(f"   metadata: {r['metadata']}")
                     print()
                 if timing:
@@ -347,13 +334,9 @@ Examples:
                           f"search {timing.get('search_ms', '?')}ms, "
                           f"total {timing.get('total_ms', '?')}ms "
                           f"({timing.get('corpus_size', '?')} chunks)")
-            
-            else:
-                parser.print_help()
-        
         finally:
             memory.close()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
