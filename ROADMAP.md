@@ -32,9 +32,16 @@ critical.
 
 ## Future
 
-- **C++ port:** Standalone binary — `ragger serve` + `ragger chat`.
-  Stack: Crow (HTTP), Eigen (linalg), ONNX Runtime (embeddings),
-  SQLite (storage), llama.cpp (LLM). Cross-platform (macOS + Linux).
+- **C++ port (`raggerc`):** Standalone binary with two modes:
+  - `ragger serve` — memory + LLM backend for OpenClaw or other agent
+    frameworks. No workspace files, no agent loop — just HTTP endpoints.
+  - `ragger chat` — standalone agent with full tool loop, memory, and LLM.
+    Loads workspace MD files from `~/.ragger/` (SOUL.md, USER.md, AGENTS.md,
+    MEMORY.md, TOOLS.md) — same conventions as OpenClaw's workspace.
+  - Stack: Crow (HTTP, Boost.Asio), Eigen (linalg), ONNX Runtime (embeddings),
+    tokenizers-cpp (HuggingFace tokenizer), nlohmann/json, SQLite (storage),
+    llama.cpp (LLM). Boost ProgramOptions via c_lib.
+  - Cross-platform (macOS + Linux). Same database format as Python version.
 
 - **Multi-user support:** Per-user memory in home directories (`~/.ragger/`),
   shared RAG in a common location, filesystem permissions for access control.
