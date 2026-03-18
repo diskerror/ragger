@@ -237,7 +237,7 @@ right pool for the right question.
 
 | Collection | Purpose |
 |------------|---------|
-| `memory` | Conversation memories, agent notes, decisions (default) |
+| `memory` | Agent-stored memories: facts, decisions, preferences, session summaries (default) |
 
 ### Example Custom Collections
 
@@ -248,19 +248,40 @@ right pool for the right question.
 | `notes` | Meeting notes, research, bookmarks |
 | `work` | Work-specific context, procedures |
 
+### Collections vs Categories
+
+**Collections** are the top-level partition — they control which pool of
+documents gets searched. Every memory belongs to exactly one collection.
+
+**Categories** are metadata *within* a collection — they describe what
+kind of memory it is (fact, decision, preference, session-summary, etc.).
+Categories are stored in `metadata.category` and are useful for filtering
+or organizing, but don't affect which documents are included in search.
+
+```
+memory (collection)
+├── fact (category)
+├── decision (category)
+├── preference (category)
+├── lesson (category)
+└── session-summary (category)
+
+docs (collection) — imported reference material
+orchestration (collection) — imported reference material
+```
+
 ### How It Works
 
 Every memory has a `collection` field in its metadata. When you search,
-you specify which collections to include:
+you can specify which collections to include:
 
-- **Default (no `collections` param):** Only searches `memory` — your
-  conversation memories and agent-stored notes.
+- **Default (no `collections` param):** Searches all collections.
 - **Specific collections:** `--collections docs reference` searches both.
-- **Everything:** `--collections '*'` searches all collections.
+- **Everything (explicit):** `--collections '*'` searches all collections.
 
-This prevents reference documents (manuals, textbooks) from drowning out
-your actual memories in general searches, while still making them available
-when you need them.
+Use explicit collection lists when you want to narrow results — for
+example, searching only `memory` to find your own notes without noise
+from imported reference docs.
 
 ### Tagging at Import
 

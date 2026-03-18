@@ -17,12 +17,12 @@ These are natural next steps to improve retrieval quality:
   A natural extension would be to decay memories that are never accessed and
   promote frequently-used ones — mimicking human memory consolidation.
 
-- **Native vector search:** Purpose-built vector databases (Qdrant, etc.)
-  or SQLite vector extensions would move similarity search into the database
+- **Native vector search:** Purpose-built vector databases like SQLite vector
+  extensions would move similarity search into the database
   engine, eliminating the need to load all embeddings into Python. Worthwhile
-  for very large corpora (100K+).
+  for a very large corpora (100K+).
 
-None of these are necessary at small scale (<50K chunks), but they
+None of these are necessary at a small scale (<50K chunks), but they
 become worthwhile as your corpus grows or retrieval precision becomes
 critical.
 
