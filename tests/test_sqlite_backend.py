@@ -143,15 +143,24 @@ class TestSqliteSearch:
         assert "total_ms" in timing
         assert "corpus_size" in timing
     
-    def test_search_collection_filtering(self, sqlite_backend):
+    def test_search_default_returns_all(self, sqlite_backend):
         sqlite_backend.store("Python docs", {"collection": "docs"})
         sqlite_backend.store("Python memory", {"collection": "memory"})
         
-        # Default search (memory only) — min_score=-1 for mock embeddings
+        # Default search (all collections) — min_score=-1 for mock embeddings
         result = sqlite_backend.search("Python", min_score=-1.0)
         texts = [r["text"] for r in result["results"]]
         assert any("memory" in t for t in texts)
-        # docs should not appear in default search
+        assert any("docs" in t for t in texts)
+    
+    def test_search_narrow_to_single_collection(self, sqlite_backend):
+        sqlite_backend.store("Python docs", {"collection": "docs"})
+        sqlite_backend.store("Python memory", {"collection": "memory"})
+        
+        # Narrow to memory only
+        result = sqlite_backend.search("Python", collections=["memory"], min_score=-1.0)
+        texts = [r["text"] for r in result["results"]]
+        assert any("memory" in t for t in texts)
         assert not any("docs" in t for t in texts)
     
     def test_search_specific_collection(self, sqlite_backend):

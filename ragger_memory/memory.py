@@ -69,8 +69,8 @@ class RaggerMemory:
             query: Search query text
             limit: Maximum results to return
             min_score: Minimum similarity score (0.0-1.0)
-            collections: Collections to search. None = ["memory"].
-                         Use ["*"] to search all collections.
+            collections: Collections to search. None = all collections.
+                         Use explicit list to narrow, e.g. ["memory"] or ["sibelius"].
         
         Returns:
             Dict with 'results' list and 'timing' dict

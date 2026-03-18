@@ -164,6 +164,10 @@ class MemoryBackend(ABC):
             text = self._normalize_paths(text)
             meta = self._normalize_metadata(metadata or {})
             
+            # Ensure every record has a collection
+            if 'collection' not in meta:
+                meta['collection'] = DEFAULT_COLLECTION
+            
             embedding = self.embedder.encode(text).tolist()
             timestamp = datetime.now(timezone.utc)
             
@@ -192,8 +196,8 @@ class MemoryBackend(ABC):
             query: Search query text
             limit: Maximum results to return
             min_score: Minimum similarity score (0.0-1.0)
-            collections: List of collections to search. None = default collection only.
-                         Use ["*"] or ["all"] to search everything.
+            collections: List of collections to search. None = all collections.
+                         Use explicit list to narrow, e.g. ["memory"] or ["sibelius"].
         
         Returns:
             Dict with 'results' list and 'timing' dict
@@ -208,20 +212,16 @@ class MemoryBackend(ABC):
                 return {"results": [], "timing": {}}
             
             # Filter by collection
+            # Default (None) = search all collections.
+            # Pass explicit list to narrow, e.g. ["memory"] or ["sibelius"].
             if collections and "*" not in collections and "all" not in collections:
                 mask = np.array([
                     m.get("collection", DEFAULT_COLLECTION) in collections
                     for m in metadata
                 ], dtype=bool)
             else:
-                # Default: only default collection
-                if collections is None:
-                    mask = np.array([
-                        m.get("collection", DEFAULT_COLLECTION) == DEFAULT_COLLECTION
-                        for m in metadata
-                    ], dtype=bool)
-                else:
-                    mask = np.ones(len(ids), dtype=bool)
+                # None or ["*"]/["all"] → search everything
+                mask = np.ones(len(ids), dtype=bool)
             
             if not mask.any():
                 logger.info(f"No memories in collections {collections}")
