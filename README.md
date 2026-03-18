@@ -509,6 +509,85 @@ Example `results` JSON:
 Query logging can be toggled via `QUERY_LOGGING_ENABLED` in `config.py`.
 Logging failures are caught silently — they never break search operations.
 
+## Best Practices for AI Agents
+
+If you're using Ragger as memory for an AI agent (OpenClaw, Claude,
+or any framework), these patterns help the agent work effectively
+across sessions.
+
+### Read Project Docs First
+
+Before working on any project, the agent should read its documentation
+(README, ROADMAP, CLAUDE.md, etc.) — not rely solely on memory search.
+Memory stores summaries; project files have the authoritative details.
+
+### Store Decisions Separately
+
+Don't bury technical decisions inside session summaries. Library choices,
+architecture decisions, and design rationale should be stored as their own
+memory entries with specific tags so they're findable later:
+
+```bash
+# Bad: buried in a session summary
+"Session 2026-03-17: discussed architecture, chose Crow for HTTP..."
+
+# Good: standalone decision
+"Ragger C++ port: chose Crow for HTTP (FetchContent), Eigen for vectors,
+ONNX Runtime for embeddings. Rationale: Crow is Flask-like routing,
+Eigen replaces NumPy, ONNX avoids Python dependency."
+```
+
+### Reference the Source
+
+When storing a decision, include where the details live (file paths,
+commit hashes). The memory entry is a pointer; the project file is
+the source of truth.
+
+### Usage Scenarios
+
+**Solo developer + AI assistant (local):**
+- One Ragger instance at `~/.ragger/memories.db`
+- Agent stores conversation context, decisions, and lessons learned
+- Import reference docs into named collections (`--collection docs`)
+- Agent searches `memory` by default, reaches into `docs`/`reference`
+  when the question calls for it
+
+**Solo developer + multiple AI tools:**
+- Same Ragger server (port 8432) shared across tools
+- OpenClaw, CLI scripts, editor plugins all use the same HTTP API
+- Collections separate concerns: `memory` for agent notes, `docs` for
+  reference material, `work` for project-specific context
+
+**Team / shared server:**
+- Ragger runs as a system service (see ROADMAP.md for multi-user plans)
+- Per-user memory via auth token → user isolation
+- Shared reference collections available to all users
+- Private memories stay private
+
+**Offline / air-gapped:**
+- Everything runs locally — no network calls
+- Download the embedding model once, then disconnect
+- SQLite database is a single file — easy to backup, move, or encrypt
+
+**Development + production split:**
+- Dev instance for experimentation, separate prod database
+- Export/import via CLI for promoting curated memories
+- Same binary, different `--db` paths
+
+### Collection Strategy
+
+Start simple and add collections as needs emerge:
+
+| Stage | Collections |
+|-------|-------------|
+| Getting started | Just `memory` (the default) |
+| Adding reference docs | `memory` + `docs` |
+| Multiple doc sources | `memory` + `sibelius` + `orchestration` + ... |
+| Team use | Per-user `memory` + shared `reference` |
+
+The agent should know what collections exist and when to search them.
+Store this knowledge as a memory entry so it persists across sessions.
+
 ## License
 
 GPL v3 — See [LICENSE](LICENSE) for details.
