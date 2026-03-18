@@ -6,6 +6,9 @@ usable standalone.
 
 No external APIs, no cloud services — everything runs locally.
 
+A [C++ port (raggerc)](https://github.com/diskerror/raggerc) is also
+available with the same HTTP API, database format, and config file.
+
 ## Features
 
 - **Local embeddings** — `all-MiniLM-L6-v2` via sentence-transformers (384-dim, ~90MB)
@@ -56,39 +59,62 @@ new backends (Postgres, Qdrant, etc.) — see "Writing a Custom Backend" below.
 ### 3. Test
 
 ```bash
-./ragger.py --store "Test memory"
-./ragger.py --search "test"
-./ragger.py --count
+ragger store "Test memory"
+ragger search "test"
+ragger count
 ```
 
 ## Usage
 
 ### Command Line
 
+Ragger uses verb-style commands: `ragger <verb> [options] [args]`.
+No verb or `help` prints usage.
+
 ```bash
+# Start HTTP server
+ragger serve
+ragger serve --host 0.0.0.0 --port 9000
+
 # Store a memory
-./ragger.py --store "The deploy script requires Node 18+"
+ragger store "The deploy script requires Node 18+"
 
 # Search (semantic — finds by meaning, not keywords)
-./ragger.py --search "deployment requirements"
+ragger search "deployment requirements"
 
 # Search specific collections
-./ragger.py --search "API authentication" --collections docs
-./ragger.py --search "error handling" --collections docs reference
-./ragger.py --search "anything" --collections '*'  # all collections
+ragger search "API authentication" --collections docs
+ragger search "error handling" --collections docs reference
 
 # Import a text file (paragraph-aware chunking)
-./ragger.py --import-file notes.md --chunk-size 500
+ragger import notes.md --collection docs
 
-# Import into a specific collection
-./ragger.py --import-file api-docs.md --collection docs
+# Import multiple files
+ragger import doc1.md doc2.md --collection reference
 
 # Import a converted PDF (use docling, pandoc, etc. to get text first)
-# docling myfile.pdf --to md -o .
-./ragger.py --import-file myfile.md --chunk-size 500
+ragger import myfile.md --min-chunk-size 500
+
+# Export documents
+ragger export docs ./exported/ --collection orchestration
+ragger export memories ./exported/
+ragger export all ./exported/
 
 # Count stored memories
-./ragger.py --count
+ragger count
+
+# Rebuild BM25 index
+ragger rebuild-bm25
+
+# Run MCP server (JSON-RPC over stdin/stdout)
+ragger mcp
+
+# Download/update embedding model
+ragger update-model
+
+# Help
+ragger help
+ragger          # no verb = help
 ```
 
 ### File Import Notes
@@ -97,10 +123,10 @@ Any text file works: `.md`, `.txt`, `.log`, `.csv`, etc. For PDFs, DOCX,
 and other binary formats, convert to text first with a tool like
 [docling](https://github.com/DS4SD/docling), pandoc, or pdftotext.
 
-**File size:** No practical limit when using `--chunk-size` — files are
+**File size:** No practical limit when using `--min-chunk-size` — files are
 split at paragraph boundaries (`\n\n`) and stored as separate documents.
 Without chunking, each file becomes one document. For anything longer than
-a page or two, use `--chunk-size`.
+a page or two, use `--min-chunk-size`.
 
 **Chunk size:** Smaller chunks (~300-500 chars, roughly one paragraph)
 produce better search results — the embedding captures a focused idea
@@ -113,15 +139,12 @@ antecedents, etc.).
 
 ```bash
 # Run HTTP server (for OpenClaw plugin or any HTTP client)
-./ragger.py --server                        # default: 127.0.0.1:8432
-./ragger.py --server --port 9000            # custom port
-./ragger.py --server --host 0.0.0.0         # bind to all interfaces
+ragger serve                        # default: 127.0.0.1:8432
+ragger serve --port 9000            # custom port
+ragger serve --host 0.0.0.0         # bind to all interfaces
 
 # Run MCP server (JSON-RPC over stdio)
-./ragger.py --mcp
-
-# Run MCP server (also accepts plain text queries interactively)
-./ragger.py --mcp
+ragger mcp
 ```
 
 #### MCP Plain Text Mode
@@ -200,8 +223,8 @@ In `~/.openclaw/openclaw.json`, set the memory plugin slot:
           "serverUrl": "http://localhost:8432",
           "autoRecall": true,
           "autoCapture": true,
-          "serverCommand": "/path/to/Ragger/.venv/bin/python3",
-          "serverArgs": ["/path/to/Ragger/ragger.py", "--server"]
+          "serverCommand": "/usr/local/bin/ragger-start.sh",
+          "serverArgs": ["serve"]
         }
       }
     }
@@ -209,11 +232,10 @@ In `~/.openclaw/openclaw.json`, set the memory plugin slot:
 }
 ```
 
-When `serverCommand` is set, the plugin automatically starts the Ragger
-HTTP server if it's not already running — and stops it when OpenClaw shuts
-down. No separate launchd plist or systemd unit needed. The plugin waits
-up to 15 seconds for the server to become ready (model loading takes a
-few seconds on first start).
+The `serverCommand` can point to either the C++ binary (`raggerc serve`)
+or a startup script that waits for external drives, sets environment,
+etc. The plugin automatically starts the server if it's not already
+running and waits up to 15 seconds for it to become ready.
 
 If you prefer to manage the server yourself (launchd, systemd, manual),
 just omit `serverCommand` and start it however you like.
@@ -287,10 +309,10 @@ from imported reference docs.
 
 ```bash
 # Import reference docs into a named collection
-./ragger.py --import-file api-guide.md --collection docs
+ragger import api-guide.md --collection docs
 
 # Import without --collection → defaults to "memory"
-./ragger.py --import-file meeting-notes.md
+ragger import meeting-notes.md
 ```
 
 ### Working with Your AI
@@ -325,12 +347,16 @@ Ragger/
 │   ├── backend.py              # MemoryBackend ABC (NumPy cosine similarity)
 │   ├── sqlite_backend.py       # SqliteBackend (SQLite)
 │   ├── bm25.py                 # Pure Python BM25 (Okapi) implementation
-│   ├── config.py               # Configuration (engine, model, defaults)
+│   ├── config.py               # Config file loader (INI format)
 │   ├── embedding.py            # Embedder class (sentence-transformers)
 │   ├── memory.py               # RaggerMemory facade/factory
 │   ├── server.py               # HTTP server
 │   ├── mcp_server.py           # MCP JSON-RPC server
-│   └── cli.py                  # Command-line interface
+│   ├── cli.py                  # Verb-style CLI
+│   └── lang/                   # i18n language strings
+│       ├── __init__.py         # Language selector
+│       └── en.py               # English strings
+├── example-config.conf         # Default config (hard-linked with C++ project)
 ├── ragger.py                   # Entry point (chmod +x)
 ├── requirements.txt            # Python dependencies
 └── README.md
@@ -431,7 +457,7 @@ matching with semantic vector search for better recall:
 The BM25 implementation is pure Python (no external dependencies). The
 BM25 index is persisted in a SQLite table (`bm25_index`) and loaded on
 first search. New documents are indexed automatically on store. Use
-`--rebuild-bm25` to rebuild the index after migration or bulk changes.
+`rebuild-bm25` to rebuild the index after migration or bulk changes.
 
 Hybrid search can be toggled and tuned via config:
 
@@ -447,21 +473,50 @@ See [ROADMAP.md](ROADMAP.md) for potential upgrades and future plans.
 
 ## Configuration
 
-Edit `ragger_memory/config.py` or set environment variables:
+Ragger uses a shared INI config file. Search order (first found wins):
 
-| Setting | Default | Env Var |
-|---------|---------|---------|
-| Storage engine | `sqlite` | — |
-| SQLite path | `~/.ragger/memories.db` | — |
-| Embedding model | `all-MiniLM-L6-v2` | — |
-| HF cache | `~/.cache/huggingface` | `SENTENCE_TRANSFORMERS_HOME` |
-| Server host | `127.0.0.1` | — |
-| Server port | `8432` | — |
-| BM25 enabled | `True` | — |
-| BM25 weight | `0.3` | — |
-| Vector weight | `0.7` | — |
-| Path normalization | `True` | — |
-| Query logging | `True` | — |
+1. `/etc/ragger.conf`
+2. `~/.ragger/ragger.conf`
+3. `--config-file=<path>`
+
+A config file is **required** — there are no silent defaults. See
+`example-config.conf` for all options with defaults. The same config
+file works for both the Python and C++ versions.
+
+```ini
+[server]
+host = 127.0.0.1
+port = 8432
+
+[storage]
+db_path = ~/.ragger/memories.db
+default_collection = memory
+
+[embedding]
+model = all-MiniLM-L6-v2
+dimensions = 384
+
+[search]
+default_limit = 5
+default_min_score = 0.4
+bm25_enabled = true
+bm25_weight = 0.3
+vector_weight = 0.7
+bm25_k1 = 1.5
+bm25_b = 0.75
+
+[logging]
+log_dir = ~/.ragger
+query_log = true
+http_log = true
+mcp_log = true
+
+[paths]
+normalize_home = true
+
+[import]
+minimum_chunk_size = 300
+```
 
 ## Database Schema
 
@@ -496,39 +551,10 @@ using `»` separators for deeper nesting.
 
 ## Query Logging
 
-Search queries are logged to a separate collection/table for quality
-analysis. Each query records timing, result scores, and quality metrics.
-
-```sql
--- query_log table
--- Each row stores a JSON blob with query details and timing
-CREATE TABLE query_log (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,     -- ISO 8601
-    query     TEXT NOT NULL,     -- the search query
-    results   TEXT,              -- JSON: scores, sources, quality metrics
-    timing    TEXT               -- JSON: embedding_ms, search_ms, total_ms, corpus_size
-);
-```
-
-Example `results` JSON:
-
-```json
-{
-  "query": "authentication flow",
-  "limit": 3,
-  "num_results": 3,
-  "top_score": 0.6461,
-  "score_gap": 0.0415,
-  "below_threshold": false,
-  "results": [
-    {"chunk_id": "42", "score": 0.6461, "source": "API Guide.md", "chunk_size": 415}
-  ]
-}
-```
-
-Query logging can be toggled via `QUERY_LOGGING_ENABLED` in `config.py`.
-Logging failures are caught silently — they never break search operations.
+Search queries are logged to `~/.ragger/query.log` as single-line JSON
+entries with timing, result scores, and quality metrics. Enable/disable
+via the `query_log` setting in the config file. Logging failures are
+caught silently — they never break search operations.
 
 ## Best Practices for AI Agents
 
