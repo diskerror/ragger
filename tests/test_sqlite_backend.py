@@ -24,7 +24,6 @@ class TestSqliteSchema:
         conn.close()
         
         assert "memories" in tables
-        assert "query_log" in tables
         assert "memory_usage" in tables
         assert "bm25_index" in tables
     
@@ -241,32 +240,6 @@ class TestSqliteUsageTracking:
                 "SELECT id FROM memories WHERE id = ?", (row[0],)
             ).fetchone()
             assert mem is not None
-
-
-class TestSqliteQueryLog:
-    """Tests for query logging."""
-    
-    def test_search_logs_query(self, sqlite_backend):
-        sqlite_backend.store("logged query test", {"collection": "memory"})
-        sqlite_backend.search("logged query")
-        
-        count = sqlite_backend.conn.execute(
-            "SELECT COUNT(*) FROM query_log"
-        ).fetchone()[0]
-        assert count == 1
-    
-    def test_query_log_content(self, sqlite_backend):
-        sqlite_backend.store("content test", {"collection": "memory"})
-        sqlite_backend.search("content")
-        
-        row = sqlite_backend.conn.execute(
-            "SELECT query, results, timing FROM query_log"
-        ).fetchone()
-        assert row[0] == "content"
-        results = json.loads(row[1])
-        assert "num_results" in results
-        timing = json.loads(row[2])
-        assert "total_ms" in timing
 
 
 class TestBM25IndexPersistence:

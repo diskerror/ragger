@@ -13,7 +13,6 @@ STORAGE_ENGINE = "sqlite"
 # --- SQLite backend ---
 SQLITE_PATH = "~/.ragger/memories.db"
 SQLITE_MEMORIES_TABLE = "memories"
-SQLITE_QUERY_LOG_TABLE = "query_log"
 SQLITE_USAGE_TABLE = "memory_usage"
 
 # --- Embedding model ---

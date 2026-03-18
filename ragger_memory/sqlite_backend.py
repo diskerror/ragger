@@ -15,7 +15,7 @@ import numpy as np
 
 from .backend import MemoryBackend
 from .bm25 import tokenize
-from .config import SQLITE_PATH, SQLITE_MEMORIES_TABLE, SQLITE_QUERY_LOG_TABLE, SQLITE_USAGE_TABLE, USAGE_TRACKING_ENABLED
+from .config import SQLITE_PATH, SQLITE_MEMORIES_TABLE, SQLITE_USAGE_TABLE, USAGE_TRACKING_ENABLED
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,6 @@ class SqliteBackend(MemoryBackend):
         path_str = db_path or SQLITE_PATH
         self.db_path = Path(path_str).expanduser()
         self._memories_table = SQLITE_MEMORIES_TABLE
-        self._query_log_table = SQLITE_QUERY_LOG_TABLE
         self._usage_table = SQLITE_USAGE_TABLE
         
         # Auto-create parent directories
@@ -68,16 +67,6 @@ class SqliteBackend(MemoryBackend):
                     embedding BLOB NOT NULL,
                     metadata TEXT,
                     timestamp TEXT NOT NULL
-                )
-            """)
-            
-            self.conn.execute(f"""
-                CREATE TABLE IF NOT EXISTS {self._query_log_table} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT NOT NULL,
-                    query TEXT NOT NULL,
-                    results TEXT,
-                    timing TEXT
                 )
             """)
             
@@ -267,9 +256,10 @@ class SqliteBackend(MemoryBackend):
         limit: int,
         min_score: float
     ):
-        """Log a search query to the SQLite query_log table and query.log file"""
+        """Log a search query to query.log as single-line JSON"""
         try:
             log_entry = {
+                "ts": datetime.now(timezone.utc).isoformat(),
                 "query": query,
                 "limit": limit,
                 "min_score": min_score,
@@ -277,36 +267,19 @@ class SqliteBackend(MemoryBackend):
                 "top_score": round(top_score, 4),
                 "score_gap": round(score_gap, 4),
                 "below_threshold": top_score < 0.4,
+                "timing": timing,
                 "results": [
                     {
-                        "chunk_id": r["id"],
+                        "id": r["id"],
                         "score": round(r["score"], 4),
                         "source": r["metadata"].get("source", ""),
-                        "chunk_size": len(r["text"])
+                        "size": len(r["text"])
                     }
                     for r in results
-                ],
-                "feedback": None
+                ]
             }
             
-            timestamp = datetime.now(timezone.utc).isoformat()
-            results_json = json.dumps(log_entry)
-            timing_json = json.dumps(timing)
-            
-            # Log to query.log file
-            query_logger.info(
-                f"query=\"{query}\" results={len(results)} "
-                f"top_score={top_score:.4f} total_ms={timing.get('total_ms', '?')} "
-                f"corpus={timing.get('corpus_size', '?')}"
-            )
-            
-            # Log to SQLite query_log table
-            self.conn.execute(
-                f"INSERT INTO {self._query_log_table} (timestamp, query, results, timing) "
-                f"VALUES (?, ?, ?, ?)",
-                (timestamp, query, results_json, timing_json)
-            )
-            self.conn.commit()
+            query_logger.info(json.dumps(log_entry, separators=(',', ':')))
             
         except Exception as e:
             logger.warning(f"Failed to log query: {e}")
