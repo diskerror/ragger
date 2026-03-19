@@ -508,6 +508,17 @@ See [AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md) for usage scenarios,
 collection strategy, conversation memory lifecycle, and best practices
 for AI agents using Ragger as long-term memory.
 
+## macOS Deployment Note
+
+When running Ragger as a LaunchDaemon (i.e., starting at boot before any user logs in),
+be aware that if the user's home directory is on an external or non-default volume, that
+volume may not be mounted until a user session starts. In this case, you may need to
+enable **System Settings → Users & Groups → Automatically log in as…** for the
+relevant user account to ensure the volume is available at boot.
+
+A start script that waits for the volume to mount (with a timeout) can help, but is not
+a substitute for the volume actually being mounted by the system.
+
 ## License
 
 GPL v3 — See [LICENSE](LICENSE) for details.
