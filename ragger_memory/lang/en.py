@@ -17,6 +17,11 @@ ERR_CONFIG_FILE_MISSING = "Config file not found: {path}"
 MSG_SERVER_RUNNING = "Ragger Memory server running on http://{host}:{port}"
 MSG_SERVER_ENDPOINTS = "Endpoints:"
 MSG_SERVER_STOP = "Press Ctrl+C to stop."
+ERR_PORT_IN_USE = (
+    "Error: port {port} is already in use. Another instance may be running.\n"
+    "To run multiple instances, set a different port in your config file\n"
+    "(~/.ragger/ragger.conf) and update the OpenClaw plugin's serverUrl to match."
+)
 ERR_REQUEST = "Request error: {error}"
 
 # --- Backend ---

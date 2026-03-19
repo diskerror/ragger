@@ -157,3 +157,73 @@ class TestUnknownEndpoint:
             assert False, "Should have raised"
         except Exception as e:
             assert "404" in str(e)
+
+
+class TestPortCollision:
+    """Tests for port collision handling."""
+    
+    def test_port_already_in_use(self, mock_memory):
+        """Starting server on occupied port should raise error."""
+        import socket
+        
+        # Bind to a port first
+        blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        blocker.bind(('127.0.0.1', 0))
+        blocker.listen(1)
+        blocked_port = blocker.getsockname()[1]
+        
+        try:
+            # Try to start server on same port
+            original = server_module._memory
+            server_module._memory = mock_memory
+            
+            with pytest.raises(OSError) as exc_info:
+                httpd = HTTPServer(('127.0.0.1', blocked_port), RaggerHandler)
+            
+            # Should indicate address already in use
+            assert exc_info.value.errno in (48, 98)  # EADDRINUSE (macOS=48, Linux=98)
+            
+            server_module._memory = original
+        finally:
+            blocker.close()
+    
+    def test_find_free_port_returns_available(self):
+        """_find_free_port should return an available port."""
+        port = _find_free_port()
+        
+        # Should be valid port number
+        assert 1024 <= port <= 65535
+        
+        # Should be bindable
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(('127.0.0.1', port))
+            # If we got here, port was available
+    
+    def test_sequential_servers_use_different_ports(self, mock_memory):
+        """Multiple server instances should use different ports."""
+        original = server_module._memory
+        server_module._memory = mock_memory
+        
+        port1 = _find_free_port()
+        httpd1 = HTTPServer(('127.0.0.1', port1), RaggerHandler)
+        thread1 = threading.Thread(target=httpd1.serve_forever, daemon=True)
+        thread1.start()
+        
+        # Second server should get different port
+        port2 = _find_free_port()
+        assert port2 != port1
+        
+        httpd2 = HTTPServer(('127.0.0.1', port2), RaggerHandler)
+        thread2 = threading.Thread(target=httpd2.serve_forever, daemon=True)
+        thread2.start()
+        
+        # Both should respond
+        status1, _ = _get(port1, "/health")
+        status2, _ = _get(port2, "/health")
+        assert status1 == 200
+        assert status2 == 200
+        
+        httpd1.shutdown()
+        httpd2.shutdown()
+        server_module._memory = original

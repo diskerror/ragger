@@ -2,8 +2,8 @@
 Configuration for Ragger Memory
 
 Loaded from ragger.conf at runtime.
-Search order: /etc/ragger.conf → ~/.ragger/ragger.conf → --config-file=
-First file found wins.
+Search order: --config-file= → ~/.ragger/ragger.conf → bootstrap new config
+First file found wins. Created automatically on first run.
 """
 import configparser
 import os
@@ -15,35 +15,84 @@ def expand_path(path: str) -> str:
     return os.path.expanduser(path)
 
 
+DEFAULT_CONFIG = """\
+# ragger.conf — Ragger Memory configuration
+#
+# Search order:
+#   1. --config-file=<path>  (explicit override)
+#   2. ~/.ragger/ragger.conf (per-user default)
+#
+# First file found wins. Created automatically on first run.
+
+[server]
+host = 127.0.0.1
+port = 8432
+
+[storage]
+db_path = ~/.ragger/memories.db
+default_collection = memory
+
+[embedding]
+model = all-MiniLM-L6-v2
+dimensions = 384
+# model_dir: path to ONNX model files (default: ~/.ragger/models)
+# model_dir = ~/.ragger/models
+
+[search]
+default_limit = 5
+default_min_score = 0.4
+bm25_enabled = true
+bm25_weight = 0.3
+vector_weight = 0.7
+bm25_k1 = 1.5
+bm25_b = 0.75
+
+[logging]
+log_dir = ~/.ragger
+query_log = true
+http_log = true
+mcp_log = true
+
+[paths]
+normalize_home = true
+
+[import]
+minimum_chunk_size = 300
+"""
+
+
+def _bootstrap_user_config() -> str:
+    """Create ~/.ragger/ and default config on first run."""
+    ragger_dir = expand_path("~/.ragger")
+    conf_path = os.path.join(ragger_dir, "ragger.conf")
+    os.makedirs(ragger_dir, exist_ok=True)
+    with open(conf_path, "w") as f:
+        f.write(DEFAULT_CONFIG)
+    print(f"Created default config: {conf_path}", file=sys.stderr)
+    return conf_path
+
+
 def find_config_file(cli_path: str = "") -> str:
     """
-    Find config file using search order. Returns path or raises.
+    Find config file using search order. Returns path or bootstraps new one.
 
     Args:
         cli_path: Path from --config-file (empty if not given)
     """
-    # 1. /etc/ragger.conf
-    if os.path.exists("/etc/ragger.conf"):
-        return "/etc/ragger.conf"
+    # 1. Explicit --config-file= takes highest priority
+    if cli_path:
+        resolved = expand_path(cli_path)
+        if not os.path.exists(resolved):
+            raise FileNotFoundError(f"Config file not found: {resolved}")
+        return resolved
 
     # 2. ~/.ragger/ragger.conf
     user_conf = expand_path("~/.ragger/ragger.conf")
     if os.path.exists(user_conf):
         return user_conf
 
-    # 3. --config-file= (required at this point)
-    if not cli_path:
-        raise FileNotFoundError(
-            "No config file found.\n"
-            "Searched: /etc/ragger.conf, ~/.ragger/ragger.conf\n"
-            "Use --config-file=<path> to specify one."
-        )
-
-    resolved = expand_path(cli_path)
-    if not os.path.exists(resolved):
-        raise FileNotFoundError(f"Config file not found: {resolved}")
-
-    return resolved
+    # 3. First run — bootstrap default config
+    return _bootstrap_user_config()
 
 
 def load_config(path: str) -> dict:

@@ -95,6 +95,19 @@ class RaggerHandler(BaseHTTPRequestHandler):
 
 def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     """Start the HTTP server"""
+    import socket
+    import sys
+
+    # Check if port is available before loading model
+    test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        test_sock.bind((host, port))
+    except OSError:
+        print(lang.ERR_PORT_IN_USE.format(port=port), file=sys.stderr)
+        sys.exit(1)
+    finally:
+        test_sock.close()
+
     global _memory
     
     _memory = RaggerMemory()
