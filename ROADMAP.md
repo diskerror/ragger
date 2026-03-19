@@ -1,5 +1,9 @@
 # Ragger Memory — Roadmap
 
+## Current: v0.6.0
+
+Both Python and C++ versions at feature parity. C++ is production server.
+
 ## Potential Upgrades
 
 These are natural next steps to improve retrieval quality:
@@ -26,25 +30,59 @@ None of these are necessary at a small scale (<50K chunks), but they
 become worthwhile as your corpus grows or retrieval precision becomes
 critical.
 
-## v0.6.0 (Planned)
+## Multi-User Architecture (v0.7.0+)
 
-- Remove deprecated `--convert` CLI command (migration tooling no longer needed)
+### System-Wide (`/var/ragger/` or platform equivalent)
+- `ragger.conf` — system config (port, host, model path, search params, cache TTL)
+- `memories.db` — shared knowledge base. Every record tagged with `user_id`.
+  Documents imported here by default. Users can store/move project knowledge
+  here for collaboration.
+- `models/` — shared ONNX model files
+- Logs
 
-## Future
+### Per-User (`~/.ragger/`)
+- `ragger.conf` — personal additions (extends system config, does not override)
+- `memories.db` — private conversations, personal memories
+- `token` — bearer auth token, permissions 0600
+- `USER.md` — about this user (preferences, working style)
+- `AGENTS.md` — per-user agent customization
+- Workspace files as needed
 
-- **C++ port (`raggerc`):** Standalone binary with two modes:
-  - `ragger serve` — memory + LLM backend for OpenClaw or other agent
-    frameworks. No workspace files, no agent loop — just HTTP endpoints.
-  - `ragger chat` — standalone agent with full tool loop, memory, and LLM.
-    Loads workspace MD files from `~/.ragger/` (SOUL.md, USER.md, AGENTS.md,
-    MEMORY.md, TOOLS.md) — same conventions as OpenClaw's workspace.
-  - Stack: Crow (HTTP, Boost.Asio), Eigen (linalg), ONNX Runtime (embeddings),
-    tokenizers-cpp (HuggingFace tokenizer), nlohmann/json, SQLite (storage),
-    llama.cpp (LLM). Boost ProgramOptions via c_lib.
-  - Cross-platform (macOS + Linux). Same database format as Python version.
+### Authentication
+- **API clients**: Bearer token in `Authorization` header. Token generated on
+  first run, stored in `~/.ragger/token` (0600). Daemon maps token → username
+  (home directory name, e.g. "reid").
+- **Browser (future `ragger chat` web UI)**: Hashed password + session cookies.
+  Separate auth concern from API tokens.
 
-- **Multi-user support:** Per-user memory in home directories (`~/.ragger/`),
-  shared RAG in a common location, filesystem permissions for access control.
+### Runtime Model
+- **Single process**, single port, single loaded embedding model
+- Per-user backend cached with configurable TTL (default 12 hours)
+- Search merges system DB + user's private DB, ranked together
+- Multiple concurrent users, each with their own conversation context
+- One persona, many simultaneous conversations
 
-- **Thin CLI client:** HTTP request to running server instead of loading
-  the embedding model. Sub-100ms queries from the terminal.
+### Collaborative Features
+- Users can store to system DB tagged with `user_id` and project (`collection`)
+- Project-scoped search: filter by collection for team context
+- Move/promote between private and system memory
+- Only admin users can modify system-wide files through the agent
+- System files also changeable manually with root/ragger user perms
+
+### Permissions
+- Daemon runs as `_ragger` (macOS) / `ragger` (Linux)
+- System directory owned by ragger user
+- Each user's `~/.ragger/` readable by ragger group
+- Project-level permissions (future): who can read/write which collections
+
+## Agent Modes
+
+- **`ragger serve`** — headless memory + LLM backend. No workspace files,
+  no agent loop — just HTTP endpoints. For OpenClaw or other frameworks.
+- **`ragger chat`** — standalone agent with full tool loop, memory, and LLM.
+  Loads workspace MD files from `~/.ragger/`. Web UI for browser access.
+
+## Thin CLI Client
+
+HTTP request to running server instead of loading the embedding model.
+Sub-100ms queries from the terminal.
