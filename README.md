@@ -508,6 +508,40 @@ See [AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md) for usage scenarios,
 collection strategy, conversation memory lifecycle, and best practices
 for AI agents using Ragger as long-term memory.
 
+## Installation
+
+### Per-user install (single user, no sudo)
+
+| Platform | Executable location | Config location |
+|----------|-------------------|-----------------|
+| macOS    | `~/.local/bin/ragger` | `~/.ragger/ragger.conf` |
+| Linux    | `~/.local/bin/ragger` | `~/.ragger/ragger.conf` |
+| Windows  | `%LOCALAPPDATA%\ragger\ragger.exe` | `%LOCALAPPDATA%\ragger\ragger.conf` |
+
+On macOS/Linux, ensure `~/.local/bin` is in your `PATH`:
+```bash
+export PATH="$HOME/.local/bin:$PATH"  # add to ~/.zshrc or ~/.bashrc
+```
+
+Install as the default `ragger` command:
+```bash
+mkdir -p ~/.local/bin
+cat > ~/.local/bin/ragger << 'EOF'
+#!/bin/bash
+RAGGER_PY_DIR="${RAGGER_PY_DIR:-$HOME/PyCharmProjects/Ragger}"
+exec python3 "$RAGGER_PY_DIR/ragger_memory/cli.py" "$@"
+EOF
+chmod +x ~/.local/bin/ragger
+```
+
+If the C++ version is also installed, this can coexist as `ragger-py`
+while the C++ binary is the default `ragger`.
+
+### System-wide install (future, multi-user)
+
+Reserved for future multi-user support. Will use `/usr/local/bin/ragger`,
+`/etc/ragger.conf`, and `/var/ragger/` for data.
+
 ## macOS Deployment Note
 
 When running Ragger as a LaunchDaemon (i.e., starting at boot before any user logs in),
