@@ -4,9 +4,9 @@ Semantic memory store with local embeddings and pluggable storage backends.
 Designed as a long-term memory backend for AI agents (OpenClaw, etc.) but
 usable standalone.
 
-No external APIs, no cloud services — everything runs locally.
+No external APIs, no cloud services — **everything runs locally**.
 
-A [C++ port (raggerc)](https://github.com/diskerror/raggerc) is also
+A [C++ port (ragger)](https://github.com/diskerror/ragger.cpp) is also
 available with the same HTTP API, database format, and config file.
 
 ## Features
