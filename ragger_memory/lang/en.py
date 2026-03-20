@@ -18,8 +18,10 @@ MSG_SERVER_RUNNING = "Ragger Memory server running on http://{host}:{port}"
 MSG_SERVER_ENDPOINTS = "Endpoints:"
 MSG_SERVER_STOP = "Press Ctrl+C to stop."
 ERR_PORT_IN_USE = (
-    "Error: port {port} is already in use. Another instance may be running.\n"
-    "To run multiple instances, set a different port in your config file\n"
+    "Error: port {port} is already in use.\n"
+    "Ragger daemon is already running. Use 'ragger search', 'ragger store',\n"
+    "or 'ragger chat' to connect.\n"
+    "To run a second instance, set a different port in your config file\n"
     "(~/.ragger/ragger.conf) and update the OpenClaw plugin's serverUrl to match."
 )
 ERR_REQUEST = "Request error: {error}"

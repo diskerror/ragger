@@ -197,6 +197,8 @@ Examples:
     p_store.add_argument("text", type=str, help="Text to store")
     p_store.add_argument("--collection", type=str, default=None,
                          help="Collection name")
+    p_store.add_argument("--private", action="store_true",
+                         help="Store to user's private memory")
 
     # --- count ---
     sub.add_parser("count", help="Show memory count")
@@ -206,6 +208,8 @@ Examples:
     p_import.add_argument("files", type=str, nargs="+", help="Files to import")
     p_import.add_argument("--collection", type=str, default=None,
                           help="Collection name for imported chunks")
+    p_import.add_argument("--private", action="store_true",
+                          help="Import to user's private memory (~/.ragger/memories.db)")
     p_import.add_argument("--min-chunk-size", type=int,
                           default=cfg["minimum_chunk_size"],
                           help=f"Min chunk size (default: {cfg['minimum_chunk_size']})")
@@ -320,12 +324,22 @@ Examples:
                 print(f"Stored with id: {memory_id}")
 
             elif args.verb == "import":
+                # --private: use user's DB explicitly
+                if getattr(args, 'private', False):
+                    from .config import expand_path
+                    private_db = expand_path(cfg["db_path"])
+                    import_memory = RaggerMemory(uri=private_db)
+                else:
+                    import_memory = memory
+
                 import_meta = {}
                 if args.collection:
                     import_meta["collection"] = args.collection
                 for filepath in args.files:
-                    import_file(memory, filepath, args.min_chunk_size,
+                    import_file(import_memory, filepath, args.min_chunk_size,
                                 import_meta if import_meta else None)
+                if import_memory is not memory:
+                    import_memory.close()
 
             elif args.verb == "search":
                 collections = args.collections or (
