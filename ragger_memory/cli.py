@@ -197,8 +197,8 @@ Examples:
     p_store.add_argument("text", type=str, help="Text to store")
     p_store.add_argument("--collection", type=str, default=None,
                          help="Collection name")
-    p_store.add_argument("--private", action="store_true",
-                         help="Store to user's private memory")
+    p_store.add_argument("--public", action="store_true",
+                         help="Store to shared system memory (default: private)")
 
     # --- count ---
     sub.add_parser("count", help="Show memory count")
@@ -208,8 +208,8 @@ Examples:
     p_import.add_argument("files", type=str, nargs="+", help="Files to import")
     p_import.add_argument("--collection", type=str, default=None,
                           help="Collection name for imported chunks")
-    p_import.add_argument("--private", action="store_true",
-                          help="Import to user's private memory (~/.ragger/memories.db)")
+    p_import.add_argument("--public", action="store_true",
+                          help="Import to shared system memory (default: private)")
     p_import.add_argument("--min-chunk-size", type=int,
                           default=cfg["minimum_chunk_size"],
                           help=f"Min chunk size (default: {cfg['minimum_chunk_size']})")
@@ -324,11 +324,10 @@ Examples:
                 print(f"Stored with id: {memory_id}")
 
             elif args.verb == "import":
-                # --private: use user's DB explicitly
-                if getattr(args, 'private', False):
-                    from .config import expand_path
-                    private_db = expand_path(cfg["db_path"])
-                    import_memory = RaggerMemory(uri=private_db)
+                # Default is private (user's DB). --public routes to system DB.
+                if getattr(args, 'public', False):
+                    # TODO: system DB path from system config when multi-user is active
+                    import_memory = memory  # for now, same DB
                 else:
                     import_memory = memory
 
