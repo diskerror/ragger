@@ -7,6 +7,7 @@ import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from .memory import RaggerMemory
+from .auth import load_token, validate_token
 
 logger = logging.getLogger(__name__)
 # Dedicated HTTP log (request/response details)
@@ -17,11 +18,21 @@ from . import lang
 
 # Module-level reference so the handler can access it
 _memory = None
+_server_token = None  # None = auth disabled (backward compat)
 
 
 class RaggerHandler(BaseHTTPRequestHandler):
     """HTTP request handler for memory operations"""
-    
+
+    def _check_auth(self) -> bool:
+        """Check bearer token if auth is enabled. Returns True if authorized."""
+        if _server_token is None:
+            return True  # Auth disabled
+        auth = self.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            return validate_token(auth[7:], _server_token)
+        return False
+
     def _read_body(self) -> dict:
         length = int(self.headers.get('Content-Length', 0))
         if length == 0:
@@ -37,6 +48,9 @@ class RaggerHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
     
     def do_POST(self):
+        if not self._check_auth():
+            self._respond(401, {"error": "unauthorized"})
+            return
         try:
             params = self._read_body()
             
@@ -81,9 +95,14 @@ class RaggerHandler(BaseHTTPRequestHandler):
             self._respond(500, {"error": str(e)})
     
     def do_GET(self):
+        # /health is always public (for port detection, monitoring)
         if self.path == '/health':
             self._respond(200, {"status": "ok", "memories": _memory.count()})
-        elif self.path == '/count':
+            return
+        if not self._check_auth():
+            self._respond(401, {"error": "unauthorized"})
+            return
+        if self.path == '/count':
             self._respond(200, {"count": _memory.count()})
         else:
             self._respond(404, {"error": f"unknown endpoint: {self.path}"})
@@ -108,7 +127,14 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     finally:
         test_sock.close()
 
-    global _memory
+    global _memory, _server_token
+    
+    # Load auth token if available (None = auth disabled)
+    _server_token = load_token()
+    if _server_token:
+        print("Auth: bearer token required (loaded from ~/.ragger/token)")
+    else:
+        print("Auth: disabled (no token file found)")
     
     _memory = RaggerMemory()
     

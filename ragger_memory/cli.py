@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Optional
 
 from .memory import RaggerMemory
+from .client import RaggerClient, is_daemon_running
+from .auth import load_token, ensure_token
 from .mcp_server import run_mcp_server
 from .server import run_server
 from .config import get_config
@@ -294,8 +296,18 @@ Examples:
             export_all(args.dest, args.group_by)
 
     else:
-        # Commands that need a RaggerMemory instance
-        memory = RaggerMemory()
+        # Commands that need memory access.
+        # If daemon is running, use thin HTTP client (no model loading).
+        # Otherwise, load the model directly.
+        use_client = args.verb in ("search", "store", "count") and \
+                     is_daemon_running(cfg["host"], cfg["port"])
+
+        if use_client:
+            token = load_token()
+            memory = RaggerClient(cfg["host"], cfg["port"], token)
+        else:
+            memory = RaggerMemory()
+
         try:
             if args.verb == "count":
                 print(memory.count())
