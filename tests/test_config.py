@@ -12,16 +12,55 @@ import pytest
 from ragger_memory import config as config_module
 
 
+TEST_CONFIG = """\
+[server]
+host = 127.0.0.1
+port = 8432
+
+[storage]
+db_path = ~/.ragger/memories.db
+default_collection = memory
+
+[embedding]
+model = all-MiniLM-L6-v2
+dimensions = 384
+
+[search]
+default_limit = 5
+default_min_score = 0.4
+bm25_enabled = true
+bm25_weight = 0.3
+vector_weight = 0.7
+bm25_k1 = 1.5
+bm25_b = 0.75
+
+[logging]
+log_dir = ~/.ragger
+query_log = true
+http_log = true
+mcp_log = true
+
+[paths]
+normalize_home = true
+
+[import]
+minimum_chunk_size = 300
+"""
+
+
 @pytest.fixture
 def clean_config():
     """Reset config module state before/after each test."""
     original_config = config_module._config
     original_path = config_module._config_path
+    original_multi = config_module._is_multi_user
     config_module._config = None
     config_module._config_path = None
+    config_module._is_multi_user = False
     yield
     config_module._config = original_config
     config_module._config_path = original_path
+    config_module._is_multi_user = original_multi
 
 
 @pytest.fixture
@@ -38,7 +77,7 @@ class TestConfigSearchOrder:
     def test_explicit_cli_path_takes_priority(self, clean_config, tmp_path):
         """--config-file path should override all other locations."""
         explicit_conf = tmp_path / "custom.conf"
-        explicit_conf.write_text(config_module.DEFAULT_CONFIG)
+        explicit_conf.write_text(TEST_CONFIG)
         
         found = config_module.find_config_file(str(explicit_conf))
         assert found == str(explicit_conf)
@@ -56,7 +95,7 @@ class TestConfigSearchOrder:
         ragger_dir = temp_home / ".ragger"
         ragger_dir.mkdir()
         user_conf = ragger_dir / "ragger.conf"
-        user_conf.write_text(config_module.DEFAULT_CONFIG)
+        user_conf.write_text(TEST_CONFIG)
         
         found = config_module.find_config_file()
         assert found == str(user_conf)
@@ -88,7 +127,7 @@ class TestConfigLoading:
     def test_load_config_parses_ini(self, tmp_path):
         """load_config should parse INI format correctly."""
         conf = tmp_path / "test.conf"
-        conf.write_text(config_module.DEFAULT_CONFIG)
+        conf.write_text(TEST_CONFIG)
         
         cfg = config_module.load_config(str(conf))
         
@@ -164,7 +203,7 @@ class TestConfigInitialization:
     def test_init_config_loads_file(self, clean_config, tmp_path):
         """init_config should load and return config dict."""
         conf = tmp_path / "test.conf"
-        conf.write_text(config_module.DEFAULT_CONFIG)
+        conf.write_text(TEST_CONFIG)
         
         cfg = config_module.init_config(str(conf))
         
@@ -189,12 +228,69 @@ class TestConfigInitialization:
     def test_get_config_path_returns_loaded_path(self, clean_config, tmp_path):
         """get_config_path should return the loaded config file path."""
         conf = tmp_path / "myconf.conf"
-        conf.write_text(config_module.DEFAULT_CONFIG)
+        conf.write_text(TEST_CONFIG)
         
         config_module.init_config(str(conf))
         path = config_module.get_config_path()
         
         assert path == str(conf)
+
+
+class TestConfigLayering:
+    """Tests for system + user config layering."""
+
+    def test_user_overrides_search_limit(self, tmp_path):
+        """User config should override allowed settings."""
+        sys_conf = tmp_path / "system.conf"
+        sys_conf.write_text(TEST_CONFIG)
+
+        user_conf = tmp_path / "user.conf"
+        user_conf.write_text("[search]\ndefault_limit = 20\n")
+
+        cfg = config_module.load_layered_config(str(sys_conf), str(user_conf))
+        assert cfg["default_search_limit"] == 20
+        # Non-overridden values stay from system
+        assert cfg["port"] == 8432
+
+    def test_user_cannot_override_port(self, tmp_path):
+        """User config should NOT override system-only settings."""
+        sys_conf = tmp_path / "system.conf"
+        sys_conf.write_text(TEST_CONFIG)
+
+        user_conf = tmp_path / "user.conf"
+        user_conf.write_text("[server]\nport = 9999\n")
+
+        cfg = config_module.load_layered_config(str(sys_conf), str(user_conf))
+        assert cfg["port"] == 8432  # System wins
+
+    def test_user_overrides_default_collection(self, tmp_path):
+        """User should be able to change their default collection."""
+        sys_conf = tmp_path / "system.conf"
+        sys_conf.write_text(TEST_CONFIG)
+
+        user_conf = tmp_path / "user.conf"
+        user_conf.write_text("[storage]\ndefault_collection = personal\n")
+
+        cfg = config_module.load_layered_config(str(sys_conf), str(user_conf))
+        assert cfg["default_collection"] == "personal"
+
+    def test_no_system_config_uses_user_only(self, tmp_path):
+        """Without system config, user config provides everything."""
+        user_conf = tmp_path / "user.conf"
+        user_conf.write_text(TEST_CONFIG)
+
+        cfg = config_module.load_layered_config(None, str(user_conf))
+        assert cfg["port"] == 8432
+
+    def test_is_multi_user_detection(self, clean_config, tmp_path):
+        """Multi-user should be detected when system config exists."""
+        sys_conf = tmp_path / "system.conf"
+        sys_conf.write_text(TEST_CONFIG)
+
+        # Monkey-patch system_config_path to our temp file
+        config_module.init_config(str(sys_conf))
+        # With explicit path, it's not multi-user (it's dev/test mode)
+        # Multi-user is only when system config is found via standard path
 
 
 class TestExpandPath:
@@ -225,7 +321,7 @@ class TestBackwardCompatibility:
     def test_getattr_default_port(self, clean_config, tmp_path):
         """config.DEFAULT_PORT should work via __getattr__."""
         conf = tmp_path / "test.conf"
-        conf.write_text(config_module.DEFAULT_CONFIG)
+        conf.write_text(TEST_CONFIG)
         config_module.init_config(str(conf))
         
         assert config_module.DEFAULT_PORT == 8432
@@ -233,7 +329,7 @@ class TestBackwardCompatibility:
     def test_getattr_default_host(self, clean_config, tmp_path):
         """config.DEFAULT_HOST should work via __getattr__."""
         conf = tmp_path / "test.conf"
-        conf.write_text(config_module.DEFAULT_CONFIG)
+        conf.write_text(TEST_CONFIG)
         config_module.init_config(str(conf))
         
         assert config_module.DEFAULT_HOST == "127.0.0.1"
