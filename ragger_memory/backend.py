@@ -268,7 +268,11 @@ class MemoryBackend(ABC):
                 else:
                     bm25_norm = bm25_scores
                 
-                combined = VECTOR_WEIGHT * vec_norm + BM25_WEIGHT * bm25_norm
+                # Normalize weights: A/(A+B) pattern — any values work, don't need to sum to 1.0
+                w_total = VECTOR_WEIGHT + BM25_WEIGHT
+                w_vec = VECTOR_WEIGHT / w_total if w_total > 0 else 0.5
+                w_bm25 = BM25_WEIGHT / w_total if w_total > 0 else 0.5
+                combined = w_vec * vec_norm + w_bm25 * bm25_norm
             else:
                 combined = similarities
             

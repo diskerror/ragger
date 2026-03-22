@@ -1,0 +1,178 @@
+// Ragger Entity Relationship Diagram
+// Render: dot -Tpng ragger_er.dot -o ragger_er.png
+
+digraph ragger_er {
+    rankdir=TB;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=10, shape=record];
+    edge [fontname="Helvetica", fontsize=9];
+    bgcolor="white";
+    compound=true;
+    splines=ortho;
+
+    // === STYLE ===
+    // Bold border + dark text = implemented
+    // Dashed border + grey text = planned
+
+    // ---------------------------------------------------------------
+    //  PROCESSES (rounded boxes)
+    // ---------------------------------------------------------------
+
+    subgraph cluster_processes {
+        label="Processes & Entry Points";
+        style=filled;
+        fillcolor="#F5F5F5";
+        color="#333333";
+        fontsize=12;
+
+        main [label="{main.cpp / cli.py\n(entry point)|verbs: serve, chat, search,\nstore, count, import, export,\nmcp, rebuild-bm25, help}", style="filled,bold", fillcolor="#E8F0FE", penwidth=2];
+
+        serve_proc [label="{ragger serve|starts HTTP server\nloads model + DB\nlistens on port}", style="filled,bold", fillcolor="#E8F0FE", penwidth=2];
+
+        chat_proc [label="{ragger chat|REPL loop\nloads persona files\nsearches memory per msg\nstreams from inference}", style="filled,bold", fillcolor="#E8F0FE", penwidth=2];
+
+        import_proc [label="{ragger import|reads files\nnormalizes text\nchunks + embeds\nstores to DB}", style="filled,bold", fillcolor="#E8F0FE", penwidth=2];
+    }
+
+    // ---------------------------------------------------------------
+    //  CLASSES — Python (ragger_memory/)
+    // ---------------------------------------------------------------
+
+    subgraph cluster_python {
+        label="Python Classes  (ragger_memory/)";
+        style=filled;
+        fillcolor="#E8F5E9";
+        color="#333333";
+        fontsize=12;
+
+        py_memory [label="{RaggerMemory\n(memory.py)|— _backend: MemoryBackend\n— engine: str|+ store(text, metadata)\n+ search(query, limit, min_score, collections)\n+ count()\n+ close()}", style="filled,bold", fillcolor="#C8E6C9", penwidth=2];
+
+        py_backend [label="{MemoryBackend\n(backend.py)  «ABC»|+ store()\n+ search()\n+ count()\n+ close()}", style="filled,bold", fillcolor="#C8E6C9", penwidth=2];
+
+        py_sqlite [label="{SqliteBackend\n(sqlite_backend.py)|— conn: sqlite3.Connection\n— db_path: Path\n— embedder: Embedder\n— bm25: BM25Index|+ store(text, metadata)\n+ search(query, limit, ...)\n+ count()\n+ rebuild_bm25()}", style="filled,bold", fillcolor="#C8E6C9", penwidth=2];
+
+        py_embedder [label="{Embedder\n(embedding.py)|— model: ONNX InferenceSession\n— tokenizer: Tokenizer|+ embed(text) → vector\n+ embed_batch(texts)}", style="filled,bold", fillcolor="#C8E6C9", penwidth=2];
+
+        py_bm25 [label="{BM25Index\n(bm25.py)|— k1, b params\n— doc_freqs, avg_dl|+ score(query, doc_id)\n+ search(query, limit)\n+ index(memory_id, text)\n+ rebuild()}", style="filled,bold", fillcolor="#C8E6C9", penwidth=2];
+
+        py_server [label="{RaggerHandler\n(server.py)|— memory: RaggerMemory\n— _server_token: str|+ do_GET()\n+ do_POST()\n— _check_auth()}", style="filled,bold", fillcolor="#C8E6C9", penwidth=2];
+
+        py_client [label="{RaggerClient\n(client.py)|— host, port, token|+ search(query, ...)\n+ store(text, metadata)\n+ count()}", style="filled,bold", fillcolor="#C8E6C9", penwidth=2];
+
+        py_inference [label="{InferenceClient\n(inference.py)|— api_url, api_key\n— model, max_tokens|+ chat(messages, stream)\n+ extract_content()\n+ extract_delta()}", style="filled,bold", fillcolor="#C8E6C9", penwidth=2];
+
+        py_config [label="{config module\n(config.py)|+ load_config(path)\n+ get_config()\n+ expand_path()\n+ system_data_dir()}", style="filled,bold", fillcolor="#C8E6C9", penwidth=2];
+
+        py_auth [label="{auth module\n(auth.py)|+ ensure_token()\n+ load_token()\n+ generate_token()}", style="filled,bold", fillcolor="#C8E6C9", penwidth=2];
+
+        py_mcp [label="{MCP Server\n(mcp_server.py)|JSON-RPC over stdio|+ search\n+ store\n+ count}", style="filled,bold", fillcolor="#C8E6C9", penwidth=2];
+    }
+
+    // ---------------------------------------------------------------
+    //  CLASSES — C++ (include/ragger/)
+    // ---------------------------------------------------------------
+
+    subgraph cluster_cpp {
+        label="C++ Classes  (include/ragger/)";
+        style=filled;
+        fillcolor="#E3F2FD";
+        color="#333333";
+        fontsize=12;
+
+        cpp_memory [label="{RaggerMemory\n(memory.h)|— backend_: SqliteBackend|+ store(text, metadata)\n+ search(query, limit, ...)\n+ count()}", style="filled,bold", fillcolor="#BBDEFB", penwidth=2];
+
+        cpp_sqlite [label="{SqliteBackend\n(sqlite_backend.h)|— Impl (pimpl)\n— embedder, bm25|+ store(text, metadata)\n+ search(query, ...)\n+ count()\n+ rebuild_bm25()}", style="filled,bold", fillcolor="#BBDEFB", penwidth=2];
+
+        cpp_embedder [label="{Embedder\n(embedder.h)|— Impl (pimpl)\n— ONNX session|+ embed(text) → vector\n+ dimension()}", style="filled,bold", fillcolor="#BBDEFB", penwidth=2];
+
+        cpp_bm25 [label="{BM25Index\n(bm25.h)|— k1_, b_\n— doc_freqs_, avg_dl_|+ score(query, doc_id)\n+ search(query, limit)\n+ add_document()}", style="filled,bold", fillcolor="#BBDEFB", penwidth=2];
+
+        cpp_server [label="{Server\n(server.h)|— Impl (pimpl)\n— Crow app|+ run(memory, port)\n+ stop()}", style="filled,bold", fillcolor="#BBDEFB", penwidth=2];
+
+        cpp_config [label="{Config\n(config.h)  «struct»|port, host, db_path,\nmodel_dir, log_dir,\nsingle_user, ...|+ load(path)\n+ global()}", style="filled,bold", fillcolor="#BBDEFB", penwidth=2];
+
+        cpp_import [label="{ImportChunk\n(import.h)  «struct»|text, section,\nchunk_index|+ import_file(path, ...)}", style="filled,bold", fillcolor="#BBDEFB", penwidth=2];
+    }
+
+    // ---------------------------------------------------------------
+    //  DATABASE TABLES
+    // ---------------------------------------------------------------
+
+    subgraph cluster_db {
+        label="SQLite Schema  (memories.db)";
+        style=filled;
+        fillcolor="#FFF9C4";
+        color="#333333";
+        fontsize=12;
+
+        tbl_memories [label="{memories|id  INTEGER PK AUTO\ntext  TEXT NOT NULL\nembedding  BLOB NOT NULL\nmetadata  TEXT (JSON)\ntimestamp  TEXT NOT NULL}", style="filled,bold", fillcolor="#FFF59D", penwidth=2];
+
+        tbl_usage [label="{usage_log|id  INTEGER PK AUTO\nmemory_id  INTEGER FK → memories\ntimestamp  TEXT NOT NULL}", style="filled,bold", fillcolor="#FFF59D", penwidth=2];
+
+        tbl_bm25 [label="{bm25_index|id  INTEGER PK AUTO\nmemory_id  INTEGER FK → memories\ntoken  TEXT NOT NULL\nterm_freq  INTEGER NOT NULL}", style="filled,bold", fillcolor="#FFF59D", penwidth=2];
+
+        // Planned tables
+        tbl_users [label="{users  (planned)|user_id  INTEGER PK AUTO\nusername  TEXT UNIQUE\ntoken  TEXT UNIQUE\npasswd  TEXT (nullable)\nperms  TEXT (JSON)\nmodified_by  INTEGER FK → users\nmodified  TEXT (trigger)\ncreated  TEXT}", style="dashed", fillcolor="#FFF59D", color="#AAAAAA", fontcolor="#888888"];
+
+        tbl_memories_v2 [label="{memories v2  (planned)|+ user_id  INTEGER FK → users\n  (NULL in user DB)\n+ is_bad  BOOLEAN\n+ modified  TEXT (trigger)\n+ created  TEXT}", style="dashed", fillcolor="#FFF59D", color="#AAAAAA", fontcolor="#888888"];
+    }
+
+    // ---------------------------------------------------------------
+    //  EDGES — Process → Class
+    // ---------------------------------------------------------------
+
+    main -> serve_proc [label="verb: serve"];
+    main -> chat_proc [label="verb: chat"];
+    main -> import_proc [label="verb: import"];
+
+    serve_proc -> py_server [label="creates", penwidth=2];
+    serve_proc -> cpp_server [label="creates", penwidth=2];
+    py_server -> py_memory [label="uses", penwidth=2];
+    cpp_server -> cpp_memory [label="uses", penwidth=2];
+
+    chat_proc -> py_client [label="memory\nsearch", penwidth=2];
+    chat_proc -> py_inference [label="LLM\ncalls", penwidth=2];
+
+    import_proc -> py_memory [label="store\nchunks", penwidth=2];
+    import_proc -> cpp_import [label="C++ path", penwidth=2];
+
+    // ---------------------------------------------------------------
+    //  EDGES — Class → Class (composition/inheritance)
+    // ---------------------------------------------------------------
+
+    // Python
+    py_sqlite -> py_backend [label="extends", style=dashed, arrowhead=empty, penwidth=2];
+    py_memory -> py_backend [label="has-a\n(_backend)", penwidth=2];
+    py_sqlite -> py_embedder [label="has-a", penwidth=2];
+    py_sqlite -> py_bm25 [label="has-a", penwidth=2];
+    py_client -> py_server [label="HTTP →", style=dotted, penwidth=2];
+    py_server -> py_auth [label="checks\ntoken", penwidth=2];
+    py_mcp -> py_memory [label="wraps", penwidth=2];
+
+    // C++
+    cpp_memory -> cpp_sqlite [label="has-a", penwidth=2];
+    cpp_sqlite -> cpp_embedder [label="has-a", penwidth=2];
+    cpp_sqlite -> cpp_bm25 [label="has-a", penwidth=2];
+
+    // ---------------------------------------------------------------
+    //  EDGES — Class → Table
+    // ---------------------------------------------------------------
+
+    py_sqlite -> tbl_memories [label="CRUD", penwidth=2];
+    py_sqlite -> tbl_usage [label="log access", penwidth=2];
+    py_sqlite -> tbl_bm25 [label="index", penwidth=2];
+    cpp_sqlite -> tbl_memories [label="CRUD", penwidth=2];
+    cpp_sqlite -> tbl_bm25 [label="index", penwidth=2];
+
+    // DB relationships
+    tbl_usage -> tbl_memories [label="FK", penwidth=2, style=bold];
+    tbl_bm25 -> tbl_memories [label="FK", penwidth=2, style=bold];
+    tbl_users -> tbl_memories_v2 [label="FK\n(planned)", style=dashed, color="#AAAAAA"];
+
+    // Config feeds everything
+    py_config -> py_memory [style=dotted, label="config"];
+    py_config -> py_server [style=dotted];
+    py_config -> py_inference [style=dotted];
+    cpp_config -> cpp_memory [style=dotted, label="config"];
+    cpp_config -> cpp_server [style=dotted];
+}

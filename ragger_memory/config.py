@@ -1,13 +1,16 @@
 """
 Configuration for Ragger Memory
 
-Layered config:
-  1. System config (/etc/ragger.conf or platform equivalent) — full settings + user defaults
-  2. User config (~/.ragger/ragger.conf) — personal overrides (subset of settings)
-  3. --config-file= — explicit override (replaces both, for development/testing)
+Config search order:
+  1. --config=<path>       (explicit override, replaces all layering)
+  2. /etc/ragger.ini       (system config, installed by install-system.sh)
+  3. ~/.ragger/ragger.ini  (per-user overrides, auto-created on first run)
 
 System config is the authoritative source. User config can only override
 user-level settings (search preferences, default collection, query logging).
+
+If no system config exists, ~/.ragger/ragger.ini is bootstrapped with
+full settings for standalone single-user operation.
 """
 import configparser
 import os
@@ -24,10 +27,10 @@ def system_config_path() -> str:
     """Platform-specific system config path."""
     if platform.system() == "Windows":
         appdata = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
-        return os.path.join(appdata, "ragger", "ragger.conf")
+        return os.path.join(appdata, "ragger", "ragger.ini")
     else:
-        # macOS and Linux: /etc/ragger.conf
-        return "/etc/ragger.conf"
+        # macOS and Linux: /etc/ragger.ini
+        return "/etc/ragger.ini"
 
 
 def system_data_dir() -> str:
@@ -61,20 +64,22 @@ def system_model_dir() -> str:
 # ---------------------------------------------------------------------------
 
 SYSTEM_DEFAULT_CONFIG = """\
-# ragger.conf — Ragger Memory system configuration
+# ragger.ini — Ragger Memory system configuration
 #
 # This file controls the daemon and sets defaults for all users.
 # Location: {system_path}
 #
-# User overrides: ~/.ragger/ragger.conf (limited settings only)
+# User overrides: ~/.ragger/ragger.ini (limited settings only)
 
 [server]
 host = 127.0.0.1
 port = 8432
+# Single-user mode: no system DB is created.
+# Each user's memory lives only in ~/.ragger/memories.db.
+# Set to false for shared/collaborative document storage.
+single_user = true
 
 [storage]
-# System-wide shared memory database
-db_path = {data_dir}/memories.db
 default_collection = memory
 
 [embedding]
@@ -86,10 +91,17 @@ model_dir = {model_dir}
 default_limit = 5
 default_min_score = 0.4
 bm25_enabled = true
-bm25_weight = 0.3
-vector_weight = 0.7
+; Weights are ratios — don't need to sum to 1.0. "3 and 7" = "0.3 and 0.7"
+bm25_weight = 3
+vector_weight = 7
 bm25_k1 = 1.5
 bm25_b = 0.75
+
+[inference]
+# provider = openai-compatible
+# api_url = https://api.anthropic.com/v1
+# api_key = sk-ant-...
+# max_tokens = 4096
 
 [logging]
 log_dir = {log_dir}
@@ -104,13 +116,12 @@ normalize_home = true
 minimum_chunk_size = 300
 """.format(
     system_path=system_config_path(),
-    data_dir=system_data_dir(),
     model_dir=system_model_dir(),
     log_dir=system_log_dir()
 )
 
 USER_DEFAULT_CONFIG = """\
-# ragger.conf — User configuration
+# ragger.ini — User configuration
 #
 # Personal overrides. System config provides all defaults.
 # Only settings listed here can be changed by the user.
@@ -125,24 +136,30 @@ USER_DEFAULT_CONFIG = """\
 [storage]
 # default_collection = memory
 
+[inference]
+# model = claude-sonnet-4-5
+
 [logging]
 # query_log = true     # set to false to opt out of query logging
 """
 
-# Settings the user is allowed to override
-USER_OVERRIDABLE = {
-    ("user", "mode"),
-    ("search", "default_limit"),
-    ("search", "default_min_score"),
-    ("storage", "default_collection"),
-    ("logging", "query_log"),
+# Server infrastructure keys — system config always wins (blacklist)
+SERVER_LOCKED = {
+    ("server", "host"),
+    ("server", "port"),
+    ("storage", "db_path"),
+    ("storage", "formats_dir"),
+    ("logging", "log_dir"),
+    ("embedding", "model"),
+    ("embedding", "dimensions"),
+    ("embedding", "model_dir"),
 }
 
 
 def _bootstrap_user_config() -> str:
     """Create ~/.ragger/ and default user config on first run."""
     ragger_dir = expand_path("~/.ragger")
-    conf_path = os.path.join(ragger_dir, "ragger.conf")
+    conf_path = os.path.join(ragger_dir, "ragger.ini")
     os.makedirs(ragger_dir, exist_ok=True)
     with open(conf_path, "w") as f:
         f.write(USER_DEFAULT_CONFIG)
@@ -156,12 +173,12 @@ def _bootstrap_single_user_config() -> str:
     Creates a full config in ~/.ragger/ so everything works standalone.
     """
     ragger_dir = expand_path("~/.ragger")
-    conf_path = os.path.join(ragger_dir, "ragger.conf")
+    conf_path = os.path.join(ragger_dir, "ragger.ini")
     os.makedirs(ragger_dir, exist_ok=True)
 
     # Single-user gets a full config with user-local paths
     single_user_config = """\
-# ragger.conf — Ragger Memory configuration (single-user)
+# ragger.ini — Ragger Memory configuration (single-user)
 #
 # All settings in one file. When a system config exists at
 # {system_path}, this file becomes a user-override file.
@@ -183,8 +200,9 @@ dimensions = 384
 default_limit = 5
 default_min_score = 0.4
 bm25_enabled = true
-bm25_weight = 0.3
-vector_weight = 0.7
+; Weights are ratios — don't need to sum to 1.0. "3 and 7" = "0.3 and 0.7"
+bm25_weight = 3
+vector_weight = 7
 bm25_k1 = 1.5
 bm25_b = 0.75
 
@@ -205,6 +223,37 @@ minimum_chunk_size = 300
         f.write(single_user_config)
     print(f"Created default config: {conf_path}", file=sys.stderr)
     return conf_path
+
+
+def _parse_inference_endpoints(parser) -> list:
+    """
+    Parse [inference.*] sections into a list of endpoint dicts.
+
+    Example config:
+        [inference.local]
+        api_url = http://localhost:1234/v1
+        api_key = lmstudio-local
+        models = qwen/*, llama/*
+
+        [inference.anthropic]
+        api_url = https://api.anthropic.com/v1
+        api_key = sk-ant-...
+        models = claude-*
+    """
+    endpoints = []
+    for section in parser.sections():
+        if section.startswith("inference."):
+            name = section.split(".", 1)[1]
+            ep = {
+                "name": name,
+                "api_url": parser.get(section, "api_url", fallback=""),
+                "api_key": parser.get(section, "api_key", fallback=""),
+                "models": parser.get(section, "models", fallback="*"),
+                "format": parser.get(section, "format", fallback=""),
+            }
+            if ep["api_url"]:
+                endpoints.append(ep)
+    return endpoints
 
 
 def load_config(path: str) -> dict:
@@ -228,10 +277,12 @@ def load_config(path: str) -> dict:
         # Server
         "host": get("server", "host", "127.0.0.1"),
         "port": getint("server", "port", 8432),
+        "single_user": getbool("server", "single_user", True),
 
         # Storage
         "db_path": get("storage", "db_path", "~/.ragger/memories.db"),
         "default_collection": get("storage", "default_collection", "memory"),
+        "formats_dir": get("storage", "formats_dir", "/var/ragger/formats"),
 
         # Embedding
         "embedding_model": get("embedding", "model", "all-MiniLM-L6-v2"),
@@ -242,10 +293,21 @@ def load_config(path: str) -> dict:
         "default_search_limit": getint("search", "default_limit", 5),
         "default_min_score": getfloat("search", "default_min_score", 0.4),
         "bm25_enabled": getbool("search", "bm25_enabled", True),
-        "bm25_weight": getfloat("search", "bm25_weight", 0.3),
-        "vector_weight": getfloat("search", "vector_weight", 0.7),
+        "bm25_weight": getfloat("search", "bm25_weight", 3.0),
+        "vector_weight": getfloat("search", "vector_weight", 7.0),
         "bm25_k1": getfloat("search", "bm25_k1", 1.5),
         "bm25_b": getfloat("search", "bm25_b", 0.75),
+
+        # Inference — single endpoint (backward compat)
+        "inference_provider": get("inference", "provider", ""),
+        "inference_api_url": get("inference", "api_url", ""),
+        "inference_api_key": get("inference", "api_key", ""),
+        "inference_model": get("inference", "model", "claude-sonnet-4-5"),
+        "inference_max_tokens": getint("inference", "max_tokens", 4096),
+        "inference_default": get("inference", "default", ""),
+
+        # Inference — multi-endpoint from [inference.*] sections
+        "inference_endpoints": _parse_inference_endpoints(parser),
 
         # Logging
         "log_dir": get("logging", "log_dir", "~/.ragger"),
@@ -259,6 +321,12 @@ def load_config(path: str) -> dict:
         # Import
         "minimum_chunk_size": getint("import", "minimum_chunk_size", 300),
 
+        # Chat persistence
+        "chat_store_turns": getbool("chat", "store_turns", True),
+        "chat_summarize_on_pause": getbool("chat", "summarize_on_pause", True),
+        "chat_pause_minutes": getint("chat", "pause_minutes", 10),
+        "chat_summarize_on_quit": getbool("chat", "summarize_on_quit", True),
+
         # User
         "user_mode": get("user", "mode", "memory-only"),
     }
@@ -267,7 +335,9 @@ def load_config(path: str) -> dict:
 def load_layered_config(system_path: str | None, user_path: str | None) -> dict:
     """
     Load config with layering: system first, user overrides on top.
-    User can only override settings in USER_OVERRIDABLE.
+    
+    SERVER_LOCKED keys (infrastructure) are always taken from system config.
+    Everything else: user config wins if set.
     """
     # Start with defaults
     if system_path and os.path.exists(system_path):
@@ -279,33 +349,103 @@ def load_layered_config(system_path: str | None, user_path: str | None) -> dict:
     else:
         cfg = load_config("")  # all defaults
 
-    # Apply user overrides (limited set)
+    # Apply user overrides (everything except SERVER_LOCKED)
     if user_path and os.path.exists(user_path):
         user_parser = configparser.ConfigParser()
         user_parser.read(user_path)
 
-        for section, key in USER_OVERRIDABLE:
-            if user_parser.has_option(section, key):
-                val = user_parser.get(section, key)
-                # Map to config dict keys
-                key_map = {
-                    ("user", "mode"): "user_mode",
-                    ("search", "default_limit"): "default_search_limit",
-                    ("search", "default_min_score"): "default_min_score",
-                    ("storage", "default_collection"): "default_collection",
-                    ("logging", "query_log"): "query_log_enabled",
-                }
-                cfg_key = key_map.get((section, key))
+        # Complete mapping of (section, key) → config dict key
+        key_map = {
+            # Server
+            ("server", "host"): "host",
+            ("server", "port"): "port",
+            ("server", "single_user"): "single_user",
+            # Storage
+            ("storage", "db_path"): "db_path",
+            ("storage", "default_collection"): "default_collection",
+            ("storage", "formats_dir"): "formats_dir",
+            # Embedding
+            ("embedding", "model"): "embedding_model",
+            ("embedding", "dimensions"): "embedding_dimensions",
+            ("embedding", "model_dir"): "model_dir",
+            # Search
+            ("search", "default_limit"): "default_search_limit",
+            ("search", "default_min_score"): "default_min_score",
+            ("search", "bm25_enabled"): "bm25_enabled",
+            ("search", "bm25_weight"): "bm25_weight",
+            ("search", "vector_weight"): "vector_weight",
+            ("search", "bm25_k1"): "bm25_k1",
+            ("search", "bm25_b"): "bm25_b",
+            # Inference
+            ("inference", "provider"): "inference_provider",
+            ("inference", "api_url"): "inference_api_url",
+            ("inference", "api_key"): "inference_api_key",
+            ("inference", "model"): "inference_model",
+            ("inference", "max_tokens"): "inference_max_tokens",
+            ("inference", "default"): "inference_default",
+            # Logging
+            ("logging", "log_dir"): "log_dir",
+            ("logging", "query_log"): "query_log_enabled",
+            ("logging", "http_log"): "http_log_enabled",
+            ("logging", "mcp_log"): "mcp_log_enabled",
+            # Paths
+            ("paths", "normalize_home"): "normalize_home_path",
+            # Import
+            ("import", "minimum_chunk_size"): "minimum_chunk_size",
+            # Chat
+            ("chat", "store_turns"): "chat_store_turns",
+            ("chat", "summarize_on_pause"): "chat_summarize_on_pause",
+            ("chat", "pause_minutes"): "chat_pause_minutes",
+            ("chat", "summarize_on_quit"): "chat_summarize_on_quit",
+            # User
+            ("user", "mode"): "user_mode",
+        }
+
+        # Type information for coercion
+        int_keys = {
+            "port", "embedding_dimensions", "default_search_limit",
+            "inference_max_tokens", "minimum_chunk_size", "chat_pause_minutes"
+        }
+        float_keys = {
+            "default_min_score", "bm25_weight", "vector_weight", "bm25_k1", "bm25_b"
+        }
+        bool_keys = {
+            "single_user", "bm25_enabled", "query_log_enabled",
+            "http_log_enabled", "mcp_log_enabled", "normalize_home_path",
+            "chat_store_turns", "chat_summarize_on_pause", "chat_summarize_on_quit"
+        }
+
+        # Overlay user config for non-locked keys
+        for section in user_parser.sections():
+            for key in user_parser.options(section):
+                section_key = (section, key)
+                
+                # Skip server-locked keys
+                if section_key in SERVER_LOCKED:
+                    continue
+                
+                # Skip [inference.*] sections — handled by _parse_inference_endpoints
+                if section.startswith("inference."):
+                    continue
+                
+                cfg_key = key_map.get(section_key)
                 if cfg_key:
+                    val = user_parser.get(section, key)
+                    
                     # Type coercion
-                    if cfg_key in ("default_search_limit",):
+                    if cfg_key in int_keys:
                         cfg[cfg_key] = int(val)
-                    elif cfg_key in ("default_min_score",):
+                    elif cfg_key in float_keys:
                         cfg[cfg_key] = float(val)
-                    elif cfg_key in ("query_log_enabled",):
+                    elif cfg_key in bool_keys:
                         cfg[cfg_key] = val.lower() in ("true", "yes", "1")
                     else:
                         cfg[cfg_key] = val
+        
+        # Re-parse inference endpoints from user config (not locked)
+        user_endpoints = _parse_inference_endpoints(user_parser)
+        if user_endpoints:
+            cfg["inference_endpoints"] = user_endpoints
 
     return cfg
 
@@ -316,21 +456,23 @@ def find_config_files(cli_path: str = "") -> tuple[str | None, str | None]:
 
     Returns (system_path, user_path) — either may be None.
 
-    With --config-file: that file is used as the sole config (no layering).
-    Without: system config loaded first, user config overlays.
+    --config=<path> replaces /etc/ragger.ini as the system config.
+    ~/.ragger/ragger.ini is ALWAYS read for user-personal settings.
     """
-    # Explicit --config-file overrides everything
+    user_path = expand_path("~/.ragger/ragger.ini")
+    has_user = os.path.exists(user_path)
+
+    # Explicit --config replaces /etc as system config
     if cli_path:
         resolved = expand_path(cli_path)
         if not os.path.exists(resolved):
             raise FileNotFoundError(f"Config file not found: {resolved}")
-        return (resolved, None)
+        if not has_user:
+            _bootstrap_user_config()
+        return (resolved, user_path)
 
     sys_path = system_config_path()
-    user_path = expand_path("~/.ragger/ragger.conf")
-
     has_system = os.path.exists(sys_path)
-    has_user = os.path.exists(user_path)
 
     if has_system and not has_user:
         # System config exists, bootstrap user config for overrides
@@ -372,14 +514,9 @@ def init_config(cli_path: str = "") -> dict:
 
     sys_path, user_path = find_config_files(cli_path)
 
-    if cli_path:
-        # Explicit override — single file, no layering
-        _config_path = sys_path
-        _config = load_config(sys_path)
-    else:
-        _config_path = sys_path or user_path
-        _config = load_layered_config(sys_path, user_path)
-        _is_multi_user = sys_path is not None
+    _config_path = sys_path or user_path
+    _config = load_layered_config(sys_path, user_path)
+    _is_multi_user = sys_path is not None
 
     return _config
 

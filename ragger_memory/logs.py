@@ -12,7 +12,7 @@ import logging
 import os
 from pathlib import Path
 
-from .config import LOG_DIR, QUERY_LOG_ENABLED, HTTP_LOG_ENABLED, MCP_LOG_ENABLED
+from .config import LOG_DIR, QUERY_LOG_ENABLED, HTTP_LOG_ENABLED, MCP_LOG_ENABLED, expand_path
 
 _LOG_FORMAT = '%(asctime)s [%(levelname)s] %(message)s'
 _initialized = False
@@ -41,7 +41,11 @@ def setup_logging(verbose: bool = False, server_mode: bool = False):
         return
     _initialized = True
     
-    log_dir = LOG_DIR
+    # CLI commands log to ~/.ragger/, only the daemon uses the system log dir
+    if server_mode:
+        log_dir = LOG_DIR
+    else:
+        log_dir = expand_path("~/.ragger")
     
     # Stderr handler
     if verbose:

@@ -89,26 +89,26 @@ class TestConfigSearchOrder:
             config_module.find_config_file(str(missing))
     
     def test_finds_user_config_if_exists(self, clean_config, temp_home, monkeypatch):
-        """Should find ~/.ragger/ragger.conf if it exists."""
+        """Should find ~/.ragger/ragger.ini if it exists."""
         monkeypatch.setenv("HOME", str(temp_home))
         
         ragger_dir = temp_home / ".ragger"
         ragger_dir.mkdir()
-        user_conf = ragger_dir / "ragger.conf"
+        user_conf = ragger_dir / "ragger.ini"
         user_conf.write_text(TEST_CONFIG)
         
         found = config_module.find_config_file()
         assert found == str(user_conf)
     
     def test_bootstrap_creates_default_config(self, clean_config, temp_home, monkeypatch, capsys):
-        """First run should create ~/.ragger/ragger.conf if missing."""
+        """First run should create ~/.ragger/ragger.ini if missing."""
         monkeypatch.setenv("HOME", str(temp_home))
         
         found = config_module.find_config_file()
         
         # Should have created the directory and file
         assert Path(found).exists()
-        assert Path(found).name == "ragger.conf"
+        assert Path(found).name == "ragger.ini"
         assert ".ragger" in found
         
         # Should have printed bootstrap message

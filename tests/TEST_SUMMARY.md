@@ -6,7 +6,7 @@
 Tests for configuration loading and search order.
 
 **Coverage:**
-- Config file search order (CLI arg → ~/.ragger/ragger.conf → bootstrap)
+- Config file search order (CLI arg → ~/.ragger/ragger.ini → bootstrap)
 - Bootstrap creation of default config on first run
 - INI file parsing and value types (int, float, bool, string)
 - Custom values overriding defaults

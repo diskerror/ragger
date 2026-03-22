@@ -302,7 +302,8 @@ Ragger/
 │   └── lang/                   # i18n language strings
 │       ├── __init__.py         # Language selector
 │       └── en.py               # English strings
-├── example-config.conf         # Default config (hard-linked with C++ project)
+├── example-system.ini          # System config example (hard-linked with C++ project)
+├── example-user.ini            # User config example (hard-linked with C++ project)
 ├── ragger.py                   # Entry point (chmod +x)
 ├── requirements.txt            # Python dependencies
 └── README.md
@@ -421,13 +422,13 @@ See [ROADMAP.md](ROADMAP.md) for potential upgrades and future plans.
 
 Ragger uses a shared INI config file. Search order (first found wins):
 
-1. `/etc/ragger.conf`
-2. `~/.ragger/ragger.conf`
+1. `/etc/ragger.ini`
+2. `~/.ragger/ragger.ini`
 3. `--config-file=<path>`
 
 A config file is **required** — there are no silent defaults. See
-`example-config.conf` for all options with defaults. The same config
-file works for both the Python and C++ versions.
+`example-system.ini` and `example-user.ini` for all options with defaults. 
+The same config file works for both the Python and C++ versions.
 
 ```ini
 [server]
@@ -504,7 +505,7 @@ caught silently — they never break search operations.
 
 ## AI Agent Best Practices
 
-See [AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md) for usage scenarios,
+See [README_TO_AGENT.md](README_TO_AGENT.md) for usage scenarios,
 collection strategy, conversation memory lifecycle, and best practices
 for AI agents using Ragger as long-term memory.
 
@@ -514,9 +515,9 @@ for AI agents using Ragger as long-term memory.
 
 | Platform | Executable location | Config location |
 |----------|-------------------|-----------------|
-| macOS    | `~/.local/bin/ragger` | `~/.ragger/ragger.conf` |
-| Linux    | `~/.local/bin/ragger` | `~/.ragger/ragger.conf` |
-| Windows  | `%LOCALAPPDATA%\ragger\ragger.exe` | `%LOCALAPPDATA%\ragger\ragger.conf` |
+| macOS    | `~/.local/bin/ragger` | `~/.ragger/ragger.ini` |
+| Linux    | `~/.local/bin/ragger` | `~/.ragger/ragger.ini` |
+| Windows  | `%LOCALAPPDATA%\ragger\ragger.exe` | `%LOCALAPPDATA%\ragger\ragger.ini` |
 
 On macOS/Linux, ensure `~/.local/bin` is in your `PATH`:
 ```bash
@@ -540,7 +541,7 @@ while the C++ binary is the default `ragger`.
 ### System-wide install (future, multi-user)
 
 Reserved for future multi-user support. Will use `/usr/local/bin/ragger`,
-`/etc/ragger.conf`, and `/var/ragger/` for data.
+`/etc/ragger.ini`, and `/var/ragger/` for data.
 
 ## macOS Deployment Note
 

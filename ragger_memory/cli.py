@@ -19,6 +19,7 @@ from .auth import load_token, ensure_token
 from .mcp_server import run_mcp_server
 from .server import run_server
 from .config import get_config
+from .inference import InferenceClient
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,9 @@ def import_file(
         raise FileNotFoundError(f"File not found: {filepath}")
 
     text = path.read_text()
+
+    # Normalize line endings (Windows → Unix) and strip null bytes
+    text = text.replace('\r\n', '\n').replace('\r', '\n').replace('\x00', '')
 
     # Strip embedded base64 image data (noise for text embeddings)
     text = re.sub(r'!\[[^\]]*\]\(data:[^)]+\)', '', text)
@@ -137,6 +141,278 @@ def import_file(
     print(f"✓ Imported {len(chunks)} chunks")
 
 
+def _load_workspace_files() -> str:
+    """
+    Load workspace MD files for the system prompt.
+
+    System files (shared personality): /var/ragger/ first, ~/.ragger/ fallback
+      - SOUL.md, AGENTS.md, TOOLS.md
+
+    User files (personal, private): ~/.ragger/ only
+      - USER.md, MEMORY.md
+
+    Returns combined text for injection into system prompt.
+    """
+    from .config import expand_path, system_data_dir
+
+    user_dir = expand_path("~/.ragger")
+    common_dir = system_data_dir()  # /var/ragger/
+
+    sections = []
+
+    # System files: /var/ragger/ first, ~/.ragger/ fallback
+    for filename in ("SOUL.md", "AGENTS.md", "TOOLS.md"):
+        path = os.path.join(common_dir, filename)
+        if not os.path.isfile(path):
+            path = os.path.join(user_dir, filename)
+        if os.path.isfile(path):
+            with open(path, "r") as f:
+                sections.append(f.read().strip())
+
+    # User files: ~/.ragger/ only
+    for filename in ("USER.md", "MEMORY.md"):
+        path = os.path.join(user_dir, filename)
+        if os.path.isfile(path):
+            with open(path, "r") as f:
+                sections.append(f.read().strip())
+    
+    return "\n\n---\n\n".join(sections) if sections else ""
+
+
+def _summarize_conversation(inference, model: str, turns: list) -> str:
+    """Ask the LLM to summarize conversation turns into a memory entry."""
+    if not turns:
+        return ""
+
+    conversation_text = ""
+    for turn in turns:
+        conversation_text += f"**{turn['role'].title()}:** {turn['content']}\n\n"
+
+    summary_messages = [
+        {"role": "system", "content": (
+            "Summarize this conversation into a concise memory entry. "
+            "Extract: key facts, decisions, questions asked, topics discussed. "
+            "Write in third person past tense. Be brief — this will be stored "
+            "as a memory chunk for future retrieval."
+        )},
+        {"role": "user", "content": conversation_text}
+    ]
+
+    try:
+        response = inference.chat(summary_messages, stream=False, model=model)
+        return inference.extract_content(response, model=model)
+    except Exception as e:
+        logger.warning(f"Summary generation failed: {e}")
+        return ""
+
+
+def run_chat():
+    """
+    Simple REPL: chat with memory context injection and persistence.
+
+    Persistence (all configurable per-user in [chat]):
+    - store_turns: store each exchange as it happens
+    - summarize_on_pause: summarize after pause_minutes of idle
+    - summarize_on_quit: summarize full conversation on exit
+    """
+    import time
+
+    cfg = get_config()
+
+    # Initialize format search dirs from config
+    from . import api_formats
+    api_formats.init_formats_dir(cfg.get("formats_dir", "/var/ragger/formats"))
+
+    # Build inference client from config
+    inference = InferenceClient.from_config(cfg)
+    model = cfg.get("inference_model", "claude-sonnet-4-5")
+
+    if not inference._endpoints:
+        print("Error: no inference endpoints configured.")
+        print("Add to ragger.ini:")
+        print()
+        print("  [inference]")
+        print("  api_url = http://localhost:1234/v1")
+        print("  api_key = lmstudio-local")
+        print()
+        print("Or for multiple endpoints:")
+        print()
+        print("  [inference.local]")
+        print("  api_url = http://localhost:1234/v1")
+        print("  api_key = lmstudio-local")
+        print("  models = qwen/*, llama/*")
+        return
+
+    # Chat persistence settings
+    store_turns = cfg.get("chat_store_turns", True)
+    summarize_on_pause = cfg.get("chat_summarize_on_pause", True)
+    pause_minutes = cfg.get("chat_pause_minutes", 10)
+    summarize_on_quit = cfg.get("chat_summarize_on_quit", True)
+
+    # Memory client
+    use_client = is_daemon_running(cfg["host"], cfg["port"])
+    if use_client:
+        token = load_token()
+        memory = RaggerClient(cfg["host"], cfg["port"], token)
+    else:
+        memory = RaggerMemory()
+
+    # Load workspace files for persona
+    workspace = _load_workspace_files()
+
+    # Conversation state
+    messages = []
+    if workspace:
+        messages.append({"role": "system", "content": workspace})
+
+    unsummarized_turns = []  # turns since last summary
+    last_activity = time.time()
+
+    print(f"Ragger Chat (model: {model})")
+    print("Type '/quit' or Ctrl+D to exit\n")
+
+    def _store_turn(user_text: str, assistant_text: str):
+        """Store a single exchange in memory."""
+        if not store_turns:
+            return
+        try:
+            turn_text = f"Chat turn:\nUser: {user_text}\nAssistant: {assistant_text}"
+            memory.store(turn_text, {
+                "collection": "memory",
+                "category": "conversation",
+                "source": "ragger-chat",
+            })
+        except Exception as e:
+            logger.warning(f"Failed to store turn: {e}")
+
+    def _check_pause_summary():
+        """If idle long enough, summarize and store unsummarized turns."""
+        nonlocal unsummarized_turns, last_activity
+        if not summarize_on_pause or not unsummarized_turns:
+            return
+        idle_seconds = time.time() - last_activity
+        if idle_seconds < pause_minutes * 60:
+            return
+
+        summary = _summarize_conversation(inference, model, unsummarized_turns)
+        if summary:
+            try:
+                memory.store(summary, {
+                    "collection": "memory",
+                    "category": "conversation-summary",
+                    "source": "ragger-chat",
+                    "turns": len(unsummarized_turns),
+                })
+                logger.info(f"Stored pause summary ({len(unsummarized_turns)} turns)")
+            except Exception as e:
+                logger.warning(f"Failed to store pause summary: {e}")
+        unsummarized_turns = []
+
+    def _quit_summary():
+        """Summarize full conversation on exit."""
+        if not summarize_on_quit or not unsummarized_turns:
+            return
+
+        print("Summarizing conversation...", end="", flush=True)
+        summary = _summarize_conversation(inference, model, unsummarized_turns)
+        if summary:
+            try:
+                memory.store(summary, {
+                    "collection": "memory",
+                    "category": "conversation-summary",
+                    "source": "ragger-chat",
+                    "turns": len(unsummarized_turns),
+                })
+                print(" stored.")
+            except Exception as e:
+                print(f" failed: {e}")
+        else:
+            print(" skipped (empty).")
+
+    try:
+        while True:
+            # Check for pause summary before waiting for input
+            _check_pause_summary()
+
+            try:
+                user_input = input("You: ").strip()
+            except EOFError:
+                print("\nGoodbye!")
+                break
+
+            if not user_input:
+                continue
+
+            if user_input in ("/quit", "/exit"):
+                print("Goodbye!")
+                break
+
+            last_activity = time.time()
+
+            # Search memory for context
+            context_chunks = []
+            try:
+                result = memory.search(user_input, limit=3, min_score=0.3)
+                results = result.get("results", [])
+                if results:
+                    context_chunks = [r["text"] for r in results]
+            except Exception as e:
+                logger.warning(f"Memory search failed: {e}")
+
+            # Build message with context
+            current_messages = [m.copy() for m in messages]
+
+            if context_chunks:
+                context_text = "\n\n---\n\n".join(context_chunks)
+                memory_block = f"\n\n## Relevant memories:\n\n{context_text}"
+                if current_messages and current_messages[0]["role"] == "system":
+                    current_messages[0]["content"] += memory_block
+                else:
+                    current_messages.insert(0, {
+                        "role": "system",
+                        "content": memory_block.strip()
+                    })
+
+            current_messages.append({
+                "role": "user",
+                "content": user_input
+            })
+
+            # Send to inference API (streaming)
+            print("Assistant: ", end="", flush=True)
+            response_text = ""
+
+            try:
+                stream = inference.chat(current_messages, stream=True)
+                for chunk in stream:
+                    delta = inference.extract_delta(chunk)
+                    if delta:
+                        print(delta, end="", flush=True)
+                        response_text += delta
+                print()  # newline after response
+            except Exception as e:
+                print(f"\nError: {e}")
+                continue
+
+            # Update conversation history
+            messages.append({"role": "user", "content": user_input})
+            messages.append({"role": "assistant", "content": response_text})
+
+            # Persistence: store turn and track for summary
+            _store_turn(user_input, response_text)
+            unsummarized_turns.append({"role": "user", "content": user_input})
+            unsummarized_turns.append({"role": "assistant", "content": response_text})
+            last_activity = time.time()
+
+            print()  # blank line between exchanges
+
+    except KeyboardInterrupt:
+        print("\n\nGoodbye!")
+    finally:
+        _quit_summary()
+        memory.close()
+
+
 def main():
     """CLI entry point — verb-style commands"""
     cfg = get_config()
@@ -148,6 +424,7 @@ def main():
         epilog="""
 Verbs:
   serve             Start HTTP server
+  chat              Chat with memory context (REPL)
   search <query>    Search memories
   store <text>      Store a memory
   count             Show memory count
@@ -161,6 +438,7 @@ Verbs:
 Examples:
   ragger serve
   ragger serve --host 0.0.0.0 --port 9000
+  ragger chat
   ragger search "deployment requirements"
   ragger search "transposition" --collections sibelius
   ragger store "The deploy script requires Node 18+"
@@ -179,6 +457,9 @@ Examples:
                          help=f"Bind address (default: {cfg['host']})")
     p_serve.add_argument("--port", type=int, default=cfg["port"],
                          help=f"Port (default: {cfg['port']})")
+
+    # --- chat ---
+    sub.add_parser("chat", help="Chat with memory context (simple REPL)")
 
     # --- search ---
     p_search = sub.add_parser("search", help="Search memories")
@@ -236,24 +517,27 @@ Examples:
 
     # --- help ---
     sub.add_parser("help", help="Show help")
+    sub.add_parser("version", help="Show version")
 
     # --- Global options ---
-    parser.add_argument("--config-file", type=str, default="",
-                        help="Path to config file")
+    parser.add_argument("--config", type=str, default="",
+                        help="Path to config file (overrides /etc/ragger.ini and ~/.ragger/ragger.ini)")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Verbose logging")
-    parser.add_argument("--version", action="store_true",
+    parser.add_argument("-V", "--version", action="store_true",
                         help="Show version")
 
     args = parser.parse_args()
 
-    if args.version:
-        from . import __version__
-        print(f"ragger {__version__}")
+    if args.version or (hasattr(args, 'verb') and args.verb == "version"):
+        from . import build_version
+        print(f"ragger {build_version()}")
         return
 
-    # No verb or 'help' → print help
+    # No verb or 'help' → print help with version header
     if not args.verb or args.verb == "help":
+        from . import build_version
+        print(f"ragger {build_version()}\n")
         parser.print_help()
         return
 
@@ -268,6 +552,9 @@ Examples:
 
     if args.verb == "serve":
         run_server(args.host, args.port)
+
+    elif args.verb == "chat":
+        run_chat()
 
     elif args.verb == "mcp":
         run_mcp_server()

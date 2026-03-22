@@ -1,0 +1,162 @@
+// Ragger Data Flow Diagram
+// Render: dot -Tpng docs/dataflow.dot -o docs/dataflow.png
+
+digraph ragger {
+    rankdir=LR;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=11];
+    edge [fontname="Helvetica", fontsize=9];
+    bgcolor="white";
+    compound=true;
+
+    // === STYLE LEGEND ===
+    // Bold/filled = implemented
+    // Dashed/grey = planned/unfinished
+
+    // --- Clients ---
+    subgraph cluster_clients {
+        label="Clients";
+        style=dashed;
+        color="#888888";
+        
+        openclaw [label="OpenClaw\n(agent framework)", shape=box, style="filled,bold", fillcolor="#E8F0FE", penwidth=2];
+        cli [label="ragger CLI\n(thin client)", shape=box, style="filled,bold", fillcolor="#E8F0FE", penwidth=2];
+        chat [label="ragger chat\n(REPL)", shape=box, style="filled,bold", fillcolor="#E8F0FE", penwidth=2];
+        mcp [label="MCP Client\n(stdio)", shape=box, style="filled,bold", fillcolor="#E8F0FE", penwidth=2];
+    }
+
+    // --- Chat System (chat + persona + inference) ---
+    subgraph cluster_chat {
+        label="Chat System";
+        style="filled,bold";
+        fillcolor="#FFF8F0";
+        color="#333333";
+        penwidth=2;
+
+        chat_engine [label="Chat Engine\n(context builder)", shape=box, style="filled,bold", fillcolor="#FFE0B2", penwidth=2];
+
+        subgraph cluster_persona {
+            label="Persona Files";
+            style="filled,bold";
+            fillcolor="#FFF0E0";
+            color="#999999";
+
+            soul_common [label="/var/ragger/\nSOUL.md", shape=note, style="filled,dashed", fillcolor="#FFCCBC", color="#AAAAAA", fontcolor="#888888"];
+            soul_user [label="~/.ragger/\nSOUL.md\n(fallback)", shape=note, style="filled,bold", fillcolor="#FFCCBC", penwidth=2];
+            user_md [label="~/.ragger/\nUSER.md", shape=note, style="filled,bold", fillcolor="#FFCCBC", penwidth=2];
+            agents_md [label="~/.ragger/\nAGENTS.md", shape=note, style="filled,bold", fillcolor="#FFCCBC", penwidth=2];
+            tools_md [label="~/.ragger/\nTOOLS.md", shape=note, style="filled,bold", fillcolor="#FFCCBC", penwidth=2];
+        }
+
+        llm [label="Inference API\nClaude / LM Studio\n/ Ollama / llama.cpp\n(OpenAI-compatible)", shape=box, style="filled,bold", fillcolor="#FCE4EC", penwidth=2];
+    }
+
+    // --- Server ---
+    subgraph cluster_server {
+        label="ragger serve  (port 8432)";
+        style="filled,bold";
+        fillcolor="#F0F0F0";
+        color="#333333";
+        penwidth=2;
+
+        http [label="HTTP API\n(Crow / Flask)", shape=component, style="filled,bold", fillcolor="#FFF3E0", penwidth=2];
+        auth [label="Bearer Token\nAuth", shape=diamond, style="filled,bold", fillcolor="#FFF3E0", penwidth=2];
+        
+        subgraph cluster_core {
+            label="Core";
+            style="filled,bold";
+            fillcolor="#FFFFFF";
+            penwidth=2;
+            
+            memory [label="RaggerMemory\n(orchestrator)", shape=box, style="filled,bold", fillcolor="#E8F5E9", penwidth=2];
+            embedder [label="Embedder\n(ONNX Runtime)\n~86MB model", shape=box, style="filled,bold", fillcolor="#F3E5F5", penwidth=2];
+            bm25 [label="BM25 Index\n(hybrid search)", shape=box, style="filled,bold", fillcolor="#F3E5F5", penwidth=2];
+        }
+
+        // Planned: inference proxy endpoint
+        inference_proxy [label="Inference Proxy\n(/v1/chat/completions)", shape=component, style="dashed", fillcolor="#FFF3E0", color="#AAAAAA", fontcolor="#888888"];
+    }
+
+    // --- Storage ---
+    subgraph cluster_storage {
+        label="Storage";
+        style=dashed;
+        color="#888888";
+
+        user_db [label="~/.ragger/\nmemories.db\n(private)", shape=cylinder, style="filled,bold", fillcolor="#BBDEFB", penwidth=2];
+        common_db [label="/var/ragger/\nmemories.db\n(common)", shape=cylinder, style="dashed", fillcolor="#BBDEFB", color="#AAAAAA", fontcolor="#888888"];
+        config_user [label="~/.ragger/\nragger.conf", shape=note, style="filled,bold", fillcolor="#FFF9C4", penwidth=2];
+        config_sys [label="/etc/\nragger.conf", shape=note, style="filled,bold", fillcolor="#FFF9C4", penwidth=2];
+        token [label="~/.ragger/\ntoken", shape=note, style="filled,bold", fillcolor="#FFF9C4", penwidth=2];
+        models [label="~/.ragger/\nmodels/\n(ONNX)", shape=folder, style="filled,bold", fillcolor="#FFF9C4", penwidth=2];
+
+        // Planned
+        users_table [label="users table\n(in common DB)", shape=box, style="dashed", fillcolor="#BBDEFB", color="#AAAAAA", fontcolor="#888888"];
+    }
+
+    // --- Import Pipeline ---
+    subgraph cluster_import {
+        label="Import Pipeline";
+        style=dashed;
+        color="#888888";
+
+        files [label="Markdown / Text\nfiles", shape=parallelogram, style="filled,bold", fillcolor="#E0F2F1", penwidth=2];
+        normalize [label="Normalize\n(line endings,\nbase64 strip,\nwhitespace)", shape=box, style="filled,bold", fillcolor="#E0F2F1", penwidth=2];
+        chunker [label="Chunker\n(section-aware\nparagraph split)", shape=box, style="filled,bold", fillcolor="#E0F2F1", penwidth=2];
+    }
+
+    // === EDGES ===
+
+    // Client → Server (implemented, bold)
+    openclaw -> http [label="HTTP\n/search /store\n/count /health", penwidth=2];
+    cli -> http [label="HTTP\n(thin client)", penwidth=2];
+    mcp -> memory [label="stdio\n(JSON-RPC)", penwidth=2];
+
+    // Chat → Chat Engine
+    chat -> chat_engine [label="user\ninput", penwidth=2];
+
+    // Chat Engine → Memory (search for context)
+    chat_engine -> http [label="search\nfor context", penwidth=2];
+
+    // Chat Engine → Inference
+    chat_engine -> llm [label="streaming\nSSE", penwidth=2];
+
+    // Persona → Chat Engine
+    soul_common -> chat_engine [style=dashed, color="#AAAAAA"];
+    soul_user -> chat_engine [style=dotted, penwidth=2, label="fallback"];
+    user_md -> chat_engine [penwidth=2];
+    agents_md -> chat_engine [penwidth=2];
+    tools_md -> chat_engine [penwidth=2];
+
+    // HTTP flow
+    http -> auth [penwidth=2];
+    auth -> memory [label="authenticated", penwidth=2];
+
+    // Core flow
+    memory -> embedder [label="embed\nquery/text", penwidth=2];
+    memory -> bm25 [label="keyword\nsearch", penwidth=2];
+    memory -> user_db [label="read/write\n(private)", penwidth=2];
+    memory -> common_db [label="read/write\n(shared)", style=dashed, color="#AAAAAA"];
+
+    // Planned: inference proxy
+    http -> inference_proxy [style=dashed, color="#AAAAAA"];
+    inference_proxy -> llm [label="proxy\nrequests", style=dashed, color="#AAAAAA"];
+
+    // Planned: multi-user
+    common_db -> users_table [style=dashed, color="#AAAAAA", dir=none];
+
+    // Import flow
+    files -> normalize [penwidth=2];
+    normalize -> chunker [penwidth=2];
+    chunker -> memory [label="store\nchunks", penwidth=2];
+
+    // Config loading
+    config_sys -> http [label="load first", style=dotted, penwidth=2];
+    config_user -> http [label="override", style=dotted, penwidth=2];
+    token -> auth [style=dotted, penwidth=2];
+    models -> embedder [style=dotted, penwidth=2];
+
+    // Rank hints
+    {rank=same; user_db; common_db}
+    {rank=same; config_sys; config_user}
+}

@@ -8,7 +8,7 @@ and import it in __init__.py instead.
 # --- Config ---
 ERR_CONFIG_NOT_FOUND = (
     "No config file found.\n"
-    "Searched: /etc/ragger.conf, ~/.ragger/ragger.conf\n"
+    "Searched: /etc/ragger.ini, ~/.ragger/ragger.ini\n"
     "Use --config-file=<path> to specify one."
 )
 ERR_CONFIG_FILE_MISSING = "Config file not found: {path}"
@@ -22,7 +22,7 @@ ERR_PORT_IN_USE = (
     "Ragger daemon is already running. Use 'ragger search', 'ragger store',\n"
     "or 'ragger chat' to connect.\n"
     "To run a second instance, set a different port in your config file\n"
-    "(~/.ragger/ragger.conf) and update the OpenClaw plugin's serverUrl to match."
+    "(~/.ragger/ragger.ini) and update the OpenClaw plugin's serverUrl to match."
 )
 ERR_REQUEST = "Request error: {error}"
 

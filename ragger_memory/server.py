@@ -97,7 +97,8 @@ class RaggerHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         # /health is always public (for port detection, monitoring)
         if self.path == '/health':
-            self._respond(200, {"status": "ok", "memories": _memory.count()})
+            from . import __version__
+            self._respond(200, {"status": "ok", "version": __version__, "memories": _memory.count()})
             return
         if not self._check_auth():
             self._respond(401, {"error": "unauthorized"})

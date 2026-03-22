@@ -21,4 +21,22 @@ from .config import (
 )
 
 __all__ = ['RaggerMemory']
-__version__ = '0.5.1'
+__version__ = '0.6.1'
+
+
+def build_version() -> str:
+    """Version with date suffix if not on a tagged release."""
+    import subprocess
+    import os
+    try:
+        pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--exact-match"],
+            cwd=pkg_dir, capture_output=True, text=True, timeout=2
+        )
+        if result.returncode == 0:
+            return __version__
+    except Exception:
+        pass
+    from datetime import datetime
+    return f"{__version__}-{datetime.now().strftime('%Y-%m-%d_%H:%M:%S')}"
