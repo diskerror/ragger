@@ -43,6 +43,15 @@ class RaggerClient:
         )
         with urllib.request.urlopen(req) as resp:
             return json.loads(resp.read())
+    
+    def _delete(self, path: str) -> dict:
+        req = urllib.request.Request(
+            f"{self.base_url}{path}",
+            headers=self._headers(),
+            method="DELETE"
+        )
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read())
 
     def store(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> str:
         """Store a memory via the daemon"""
@@ -73,6 +82,25 @@ class RaggerClient:
     def health(self) -> dict:
         """Check daemon health"""
         return self._get("/health")
+    
+    def delete(self, memory_id: str) -> bool:
+        """Delete a memory by ID via the daemon"""
+        result = self._delete(f"/memory/{memory_id}")
+        return result.get("status") == "deleted"
+    
+    def delete_batch(self, memory_ids: list) -> int:
+        """Delete multiple memories by ID via the daemon"""
+        data = {"ids": memory_ids}
+        result = self._post("/delete_batch", data)
+        return result.get("deleted", 0)
+    
+    def search_by_metadata(self, metadata_filter: dict, limit: int = None) -> list:
+        """Search memories by metadata fields via the daemon"""
+        data = {"metadata": metadata_filter}
+        if limit:
+            data["limit"] = limit
+        result = self._post("/search_by_metadata", data)
+        return result.get("results", [])
 
     def close(self):
         """No-op — HTTP is stateless"""

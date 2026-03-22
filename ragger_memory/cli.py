@@ -211,11 +211,12 @@ def run_chat():
     Simple REPL: chat with memory context injection and persistence.
 
     Persistence (all configurable per-user in [chat]):
-    - store_turns: store each exchange as it happens
+    - store_turns: "true" (per-turn), "session" (one growing entry), or "false" (summaries only)
     - summarize_on_pause: summarize after pause_minutes of idle
     - summarize_on_quit: summarize full conversation on exit
     """
     import time
+    from datetime import datetime, timezone, timedelta
 
     cfg = get_config()
 
@@ -244,10 +245,20 @@ def run_chat():
         return
 
     # Chat persistence settings
-    store_turns = cfg.get("chat_store_turns", True)
+    store_turns = cfg.get("chat_store_turns", "true")  # "true", "session", or "false"
+    # Normalize to lowercase for comparison
+    if isinstance(store_turns, bool):
+        store_turns = "true" if store_turns else "false"
+    else:
+        store_turns = str(store_turns).lower()
+    
     summarize_on_pause = cfg.get("chat_summarize_on_pause", True)
     pause_minutes = cfg.get("chat_pause_minutes", 10)
     summarize_on_quit = cfg.get("chat_summarize_on_quit", True)
+    
+    # System hard limits
+    max_turn_retention_minutes = cfg.get("chat_max_turn_retention_minutes", 60)
+    max_turns_stored = cfg.get("chat_max_turns_stored", 100)
 
     # Memory client
     use_client = is_daemon_running(cfg["host"], cfg["port"])
@@ -267,23 +278,130 @@ def run_chat():
 
     unsummarized_turns = []  # turns since last summary
     last_activity = time.time()
+    session_memory_id = None  # for "session" mode
 
     print(f"Ragger Chat (model: {model})")
+    print(f"Turn storage: {store_turns}")
     print("Type '/quit' or Ctrl+D to exit\n")
 
     def _store_turn(user_text: str, assistant_text: str):
-        """Store a single exchange in memory."""
-        if not store_turns:
-            return
+        """Store a single exchange in memory (mode-dependent)."""
+        nonlocal session_memory_id
+        
+        if store_turns == "false":
+            return  # No raw turn storage, summaries only
+        
         try:
-            turn_text = f"Chat turn:\nUser: {user_text}\nAssistant: {assistant_text}"
-            memory.store(turn_text, {
-                "collection": "memory",
-                "category": "conversation",
-                "source": "ragger-chat",
-            })
+            turn_text = f"User: {user_text}\n\nAssistant: {assistant_text}"
+            
+            if store_turns == "true":
+                # Per-turn mode: each exchange is a separate memory
+                memory.store(turn_text, {
+                    "collection": "memory",
+                    "category": "conversation",
+                    "source": "ragger-chat",
+                })
+            
+            elif store_turns == "session":
+                # Session mode: one growing memory entry, update by deleting and re-storing
+                if session_memory_id:
+                    # Load existing session, append new turn, delete old, store new
+                    # For now, we'll just append by deleting and re-storing with accumulated text
+                    # This is a simplified approach - ideally we'd have an update method
+                    try:
+                        memory.delete(session_memory_id)
+                    except Exception as e:
+                        logger.warning(f"Failed to delete old session memory: {e}")
+                
+                # Build full session text from unsummarized_turns
+                session_text = "\n\n---\n\n".join(
+                    f"{t['role'].title()}: {t['content']}" 
+                    for t in unsummarized_turns
+                ) + f"\n\n---\n\nUser: {user_text}\n\nAssistant: {assistant_text}"
+                
+                session_memory_id = memory.store(session_text, {
+                    "collection": "memory",
+                    "category": "conversation",
+                    "source": "ragger-chat",
+                    "mode": "session",
+                })
+        
         except Exception as e:
             logger.warning(f"Failed to store turn: {e}")
+    
+    def _expire_old_turns():
+        """Check for and expire old turns based on system hard limits."""
+        if store_turns == "false" or store_turns == "session":
+            return  # Only applies to per-turn mode
+        
+        try:
+            # Find all conversation turns
+            turns = memory.search_by_metadata({
+                "category": "conversation",
+                "source": "ragger-chat"
+            })
+            
+            # Filter out session-mode entries
+            turns = [t for t in turns if t["metadata"].get("mode") != "session"]
+            
+            if not turns:
+                return
+            
+            now = datetime.now(timezone.utc)
+            cutoff_time = now - timedelta(minutes=max_turn_retention_minutes)
+            
+            # Find expired turns (older than retention window)
+            expired = []
+            for turn in turns:
+                # Parse timestamp
+                ts_str = turn["timestamp"]
+                if ts_str:
+                    ts = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+                    if ts < cutoff_time:
+                        expired.append(turn)
+            
+            # Also check count limit
+            if len(turns) > max_turns_stored:
+                # Sort by timestamp, oldest first
+                sorted_turns = sorted(turns, key=lambda t: t["timestamp"])
+                excess_count = len(turns) - max_turns_stored
+                # Add oldest excess turns to expired list (avoid duplicates)
+                expired_ids = {t["id"] for t in expired}
+                for turn in sorted_turns:
+                    if turn["id"] not in expired_ids:
+                        expired.append(turn)
+                        if len(expired) >= excess_count + len(expired_ids):
+                            break
+            
+            if not expired:
+                return
+            
+            logger.info(f"Expiring {len(expired)} old conversation turns")
+            
+            # Batch summarize expired turns
+            summary_text = "\n\n---\n\n".join(t["text"] for t in expired)
+            summary = _summarize_conversation(
+                inference, 
+                model, 
+                [{"role": "assistant", "content": summary_text}]
+            )
+            
+            if summary:
+                # Store summary
+                memory.store(summary, {
+                    "collection": "memory",
+                    "category": "conversation-summary",
+                    "source": "ragger-chat",
+                    "expired_turns": len(expired),
+                })
+            
+            # Delete expired turns
+            expired_ids = [t["id"] for t in expired]
+            deleted = memory.delete_batch(expired_ids)
+            logger.info(f"Deleted {deleted} expired turns, stored summary")
+        
+        except Exception as e:
+            logger.warning(f"Failed to expire old turns: {e}")
 
     def _check_pause_summary():
         """If idle long enough, summarize and store unsummarized turns."""
@@ -328,6 +446,9 @@ def run_chat():
                 print(f" failed: {e}")
         else:
             print(" skipped (empty).")
+
+    # Clean up old turns at startup
+    _expire_old_turns()
 
     try:
         while True:
@@ -403,12 +524,16 @@ def run_chat():
             unsummarized_turns.append({"role": "user", "content": user_input})
             unsummarized_turns.append({"role": "assistant", "content": response_text})
             last_activity = time.time()
+            
+            # Check for expired turns after each exchange
+            _expire_old_turns()
 
             print()  # blank line between exchanges
 
     except KeyboardInterrupt:
         print("\n\nGoodbye!")
     finally:
+        _expire_old_turns()  # Final cleanup
         _quit_summary()
         memory.close()
 

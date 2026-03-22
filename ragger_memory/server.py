@@ -87,9 +87,45 @@ class RaggerHandler(BaseHTTPRequestHandler):
             elif self.path == '/count':
                 self._respond(200, {"count": _memory.count()})
             
+            elif self.path == '/delete_batch':
+                memory_ids = params.get('ids', [])
+                if not memory_ids:
+                    self._respond(400, {"error": "ids required"})
+                    return
+                count = _memory.delete_batch(memory_ids)
+                self._respond(200, {"deleted": count})
+            
+            elif self.path == '/search_by_metadata':
+                metadata_filter = params.get('metadata', {})
+                if not metadata_filter:
+                    self._respond(400, {"error": "metadata filter required"})
+                    return
+                limit = params.get('limit', None)
+                results = _memory.search_by_metadata(metadata_filter, limit)
+                self._respond(200, {"results": results, "count": len(results)})
+            
             else:
                 self._respond(404, {"error": f"unknown endpoint: {self.path}"})
         
+        except Exception as e:
+            logger.error(lang.ERR_REQUEST.format(error=e))
+            self._respond(500, {"error": str(e)})
+    
+    def do_DELETE(self):
+        if not self._check_auth():
+            self._respond(401, {"error": "unauthorized"})
+            return
+        try:
+            # DELETE /memory/<id> — delete by ID
+            if self.path.startswith('/memory/'):
+                memory_id = self.path.split('/')[-1]
+                deleted = _memory.delete(memory_id)
+                if deleted:
+                    self._respond(200, {"status": "deleted", "id": memory_id})
+                else:
+                    self._respond(404, {"error": "memory not found"})
+            else:
+                self._respond(404, {"error": f"unknown endpoint: {self.path}"})
         except Exception as e:
             logger.error(lang.ERR_REQUEST.format(error=e))
             self._respond(500, {"error": str(e)})
@@ -142,10 +178,13 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     server = HTTPServer((host, port), RaggerHandler)
     print(lang.MSG_SERVER_RUNNING.format(host=host, port=port))
     print(lang.MSG_SERVER_ENDPOINTS)
-    print(f"  POST /store   - {{\"text\": \"...\", \"metadata\": {{...}}}}")
-    print(f"  POST /search  - {{\"query\": \"...\", \"limit\": 5}}")
-    print(f"  GET  /count   - memory count")
-    print(f"  GET  /health  - health check")
+    print(f"  POST   /store               - {{\"text\": \"...\", \"metadata\": {{...}}}}")
+    print(f"  POST   /search              - {{\"query\": \"...\", \"limit\": 5}}")
+    print(f"  POST   /search_by_metadata  - {{\"metadata\": {{\"category\": \"...\"}}, \"limit\": 10}}")
+    print(f"  POST   /delete_batch        - {{\"ids\": [\"1\", \"2\"]}}")
+    print(f"  DELETE /memory/<id>         - delete by ID")
+    print(f"  GET    /count               - memory count")
+    print(f"  GET    /health              - health check")
     print(lang.MSG_SERVER_STOP)
     
     try:

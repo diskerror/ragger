@@ -246,6 +246,42 @@ class SqliteBackend(MemoryBackend):
         cursor = self.conn.execute(f"SELECT COUNT(*) FROM {self._memories_table}")
         return cursor.fetchone()[0]
     
+    def search_by_metadata(self, metadata_filter: dict, limit: int = None) -> list:
+        """
+        Search memories by metadata fields.
+        
+        Args:
+            metadata_filter: Dict of metadata fields to match (e.g., {"category": "conversation", "source": "ragger-chat"})
+            limit: Maximum results to return (None = all)
+        
+        Returns:
+            List of dicts with id, text, metadata, timestamp
+        """
+        try:
+            cursor = self.conn.execute(
+                f"SELECT id, text, metadata, timestamp FROM {self._memories_table}"
+            )
+            rows = cursor.fetchall()
+            
+            results = []
+            for row in rows:
+                meta = json.loads(row[2]) if row[2] else {}
+                # Check if all filter fields match
+                if all(meta.get(k) == v for k, v in metadata_filter.items()):
+                    results.append({
+                        "id": str(row[0]),
+                        "text": row[1],
+                        "metadata": meta,
+                        "timestamp": row[3]
+                    })
+                    if limit and len(results) >= limit:
+                        break
+            
+            return results
+        except Exception as e:
+            logger.error(f"Failed to search by metadata: {e}")
+            raise
+    
     def _log_query(
         self,
         query: str,
@@ -437,6 +473,56 @@ class SqliteBackend(MemoryBackend):
             
         except sqlite3.Error as e:
             logger.error(f"BM25 index rebuild failed: {e}")
+            raise
+    
+    def delete(self, memory_id: str) -> bool:
+        """
+        Delete a memory by ID.
+        
+        Args:
+            memory_id: Memory ID to delete
+        
+        Returns:
+            True if deleted, False if not found
+        """
+        try:
+            cursor = self.conn.execute(
+                f"DELETE FROM {self._memories_table} WHERE id = ?",
+                (int(memory_id),)
+            )
+            self.conn.commit()
+            deleted = cursor.rowcount > 0
+            if deleted:
+                logger.info(f"Deleted memory {memory_id}")
+            return deleted
+        except Exception as e:
+            logger.error(f"Failed to delete memory {memory_id}: {e}")
+            raise
+    
+    def delete_batch(self, memory_ids: list) -> int:
+        """
+        Delete multiple memories by ID.
+        
+        Args:
+            memory_ids: List of memory IDs to delete
+        
+        Returns:
+            Number of memories deleted
+        """
+        if not memory_ids:
+            return 0
+        try:
+            placeholders = ",".join("?" * len(memory_ids))
+            cursor = self.conn.execute(
+                f"DELETE FROM {self._memories_table} WHERE id IN ({placeholders})",
+                [int(mid) for mid in memory_ids]
+            )
+            self.conn.commit()
+            count = cursor.rowcount
+            logger.info(f"Deleted {count} memories")
+            return count
+        except Exception as e:
+            logger.error(f"Failed to delete memories: {e}")
             raise
     
     def close(self):

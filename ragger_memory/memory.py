@@ -81,6 +81,43 @@ class RaggerMemory:
         """Return number of stored memories"""
         return self._backend.count()
     
+    def delete(self, memory_id: str) -> bool:
+        """
+        Delete a memory by ID
+        
+        Args:
+            memory_id: Memory ID to delete
+        
+        Returns:
+            True if deleted, False if not found
+        """
+        return self._backend.delete(memory_id)
+    
+    def delete_batch(self, memory_ids: list) -> int:
+        """
+        Delete multiple memories by ID
+        
+        Args:
+            memory_ids: List of memory IDs to delete
+        
+        Returns:
+            Number of memories deleted
+        """
+        return self._backend.delete_batch(memory_ids)
+    
+    def search_by_metadata(self, metadata_filter: dict, limit: int = None) -> list:
+        """
+        Search memories by metadata fields
+        
+        Args:
+            metadata_filter: Dict of metadata fields to match
+            limit: Maximum results to return (None = all)
+        
+        Returns:
+            List of dicts with id, text, metadata, timestamp
+        """
+        return self._backend.search_by_metadata(metadata_filter, limit)
+    
     def close(self):
         """Close backend connection"""
         self._backend.close()

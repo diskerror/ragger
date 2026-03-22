@@ -114,6 +114,16 @@ normalize_home = true
 
 [import]
 minimum_chunk_size = 300
+
+[chat]
+# Conversation persistence
+store_turns = true        # "true" (per-turn), "session" (one growing entry), or "false" (summaries only)
+summarize_on_pause = true
+pause_minutes = 10
+summarize_on_quit = true
+# System hard limits (user can't override)
+max_turn_retention_minutes = 60
+max_turns_stored = 100
 """.format(
     system_path=system_config_path(),
     model_dir=system_model_dir(),
@@ -153,6 +163,9 @@ SERVER_LOCKED = {
     ("embedding", "model"),
     ("embedding", "dimensions"),
     ("embedding", "model_dir"),
+    # Chat hard limits (system controls the ceiling)
+    ("chat", "max_turn_retention_minutes"),
+    ("chat", "max_turns_stored"),
 }
 
 
@@ -217,6 +230,16 @@ normalize_home = true
 
 [import]
 minimum_chunk_size = 300
+
+[chat]
+# Conversation persistence
+store_turns = true        # "true" (per-turn), "session" (one growing entry), or "false" (summaries only)
+summarize_on_pause = true
+pause_minutes = 10
+summarize_on_quit = true
+# System hard limits (single-user can modify these)
+max_turn_retention_minutes = 60
+max_turns_stored = 100
 """.format(system_path=system_config_path())
 
     with open(conf_path, "w") as f:
@@ -322,10 +345,12 @@ def load_config(path: str) -> dict:
         "minimum_chunk_size": getint("import", "minimum_chunk_size", 300),
 
         # Chat persistence
-        "chat_store_turns": getbool("chat", "store_turns", True),
+        "chat_store_turns": get("chat", "store_turns", "true"),  # "true", "session", or "false"
         "chat_summarize_on_pause": getbool("chat", "summarize_on_pause", True),
         "chat_pause_minutes": getint("chat", "pause_minutes", 10),
         "chat_summarize_on_quit": getbool("chat", "summarize_on_quit", True),
+        "chat_max_turn_retention_minutes": getint("chat", "max_turn_retention_minutes", 60),
+        "chat_max_turns_stored": getint("chat", "max_turns_stored", 100),
 
         # User
         "user_mode": get("user", "mode", "memory-only"),
@@ -397,6 +422,8 @@ def load_layered_config(system_path: str | None, user_path: str | None) -> dict:
             ("chat", "summarize_on_pause"): "chat_summarize_on_pause",
             ("chat", "pause_minutes"): "chat_pause_minutes",
             ("chat", "summarize_on_quit"): "chat_summarize_on_quit",
+            ("chat", "max_turn_retention_minutes"): "chat_max_turn_retention_minutes",
+            ("chat", "max_turns_stored"): "chat_max_turns_stored",
             # User
             ("user", "mode"): "user_mode",
         }
@@ -404,7 +431,8 @@ def load_layered_config(system_path: str | None, user_path: str | None) -> dict:
         # Type information for coercion
         int_keys = {
             "port", "embedding_dimensions", "default_search_limit",
-            "inference_max_tokens", "minimum_chunk_size", "chat_pause_minutes"
+            "inference_max_tokens", "minimum_chunk_size", "chat_pause_minutes",
+            "chat_max_turn_retention_minutes", "chat_max_turns_stored"
         }
         float_keys = {
             "default_min_score", "bm25_weight", "vector_weight", "bm25_k1", "bm25_b"
@@ -412,8 +440,9 @@ def load_layered_config(system_path: str | None, user_path: str | None) -> dict:
         bool_keys = {
             "single_user", "bm25_enabled", "query_log_enabled",
             "http_log_enabled", "mcp_log_enabled", "normalize_home_path",
-            "chat_store_turns", "chat_summarize_on_pause", "chat_summarize_on_quit"
+            "chat_summarize_on_pause", "chat_summarize_on_quit"
         }
+        # chat_store_turns is now a string, not bool
 
         # Overlay user config for non-locked keys
         for section in user_parser.sections():
