@@ -24,6 +24,16 @@ available with the same HTTP API, database format, and config file.
 - **Python API** — Reusable `RaggerMemory` class
 - **Query logging** — Track searches with timing, scores, and quality metrics
 
+## Status
+
+**Version 0.7.0** — Single-user, fully functional.
+
+Multi-user framework is in place (layered config with system/user INI files,
+SERVER_LOCKED keys, system ceilings on user settings, token auth, persona file
+hierarchy) but the data layer is still single-user: one database, one user,
+no user routing. Multi-user data support (users table, per-user DBs, search
+merging) is planned for a future release.
+
 ## Requirements
 
 - Python 3.10+
@@ -420,17 +430,24 @@ See [ROADMAP.md](ROADMAP.md) for potential upgrades and future plans.
 
 ## Configuration
 
-Ragger uses a shared INI config file. Search order (first found wins):
+Ragger uses layered INI config files:
 
-1. `/etc/ragger.ini`
-2. `~/.ragger/ragger.ini`
-3. `--config-file=<path>`
+1. **System config:** `/etc/ragger.ini` (or `--config=<path>` to override)
+2. **User config:** `~/.ragger/ragger.ini` (always read on top)
 
-A config file is **required** — there are no silent defaults. See
-`example-system.ini` and `example-user.ini` for all options with defaults. 
-The same config file works for both the Python and C++ versions.
+System config sets infrastructure (host, port, DB path, embedding model,
+inference endpoints). User config sets personal preferences (search limits,
+chat settings, default model). SERVER_LOCKED keys in system config can't be
+overridden by users. System ceilings cap user values (e.g., `max_search_limit`
+limits how high a user can set `default_limit`).
+
+If no config exists, first run auto-creates `~/.ragger/ragger.ini` with defaults.
+
+See `example-system.ini` and `example-user.ini` for all options.
+The same config format works for both the Python and C++ versions.
 
 ```ini
+# System config (/etc/ragger.ini) — infrastructure
 [server]
 host = 127.0.0.1
 port = 8432
@@ -447,22 +464,31 @@ dimensions = 384
 default_limit = 5
 default_min_score = 0.4
 bm25_enabled = true
-bm25_weight = 0.3
-vector_weight = 0.7
-bm25_k1 = 1.5
-bm25_b = 0.75
+; Weights are ratios: "3 and 7" = "0.3 and 0.7"
+bm25_weight = 3
+vector_weight = 7
+# max_search_limit = 0    # 0 = no ceiling
 
-[logging]
-log_dir = ~/.ragger
-query_log = true
-http_log = true
-mcp_log = true
+[chat]
+# System hard limits
+max_turn_retention_minutes = 60
+max_turns_stored = 100
+# max_persona_chars_limit = 0
+# max_memory_results_limit = 0
+```
 
-[paths]
-normalize_home = true
+```ini
+# User config (~/.ragger/ragger.ini) — personal preferences
+[search]
+default_limit = 10
 
-[import]
-minimum_chunk_size = 300
+[inference]
+model = qwen/qwen2.5-coder-14b
+
+[chat]
+store_turns = true
+max_persona_chars = 4000    # limit context for local models
+max_memory_results = 2
 ```
 
 ## Database Schema

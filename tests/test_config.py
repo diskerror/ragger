@@ -89,8 +89,11 @@ class TestConfigSearchOrder:
             config_module.find_config_file(str(missing))
     
     def test_finds_user_config_if_exists(self, clean_config, temp_home, monkeypatch):
-        """Should find ~/.ragger/ragger.ini if it exists."""
+        """Should find ~/.ragger/ragger.ini if it exists (no system config)."""
         monkeypatch.setenv("HOME", str(temp_home))
+        # Ensure /etc/ragger.ini doesn't interfere
+        monkeypatch.setattr(config_module, "system_config_path",
+                            lambda: str(temp_home / "nonexistent" / "ragger.ini"))
         
         ragger_dir = temp_home / ".ragger"
         ragger_dir.mkdir()
@@ -103,6 +106,9 @@ class TestConfigSearchOrder:
     def test_bootstrap_creates_default_config(self, clean_config, temp_home, monkeypatch, capsys):
         """First run should create ~/.ragger/ragger.ini if missing."""
         monkeypatch.setenv("HOME", str(temp_home))
+        # Ensure /etc/ragger.ini doesn't interfere
+        monkeypatch.setattr(config_module, "system_config_path",
+                            lambda: str(temp_home / "nonexistent" / "ragger.ini"))
         
         found = config_module.find_config_file()
         
