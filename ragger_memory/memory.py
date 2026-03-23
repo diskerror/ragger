@@ -60,17 +60,25 @@ class RaggerMemory:
         """True if operating with separate common + user databases."""
         return self._user_backend is not None
     
-    def store(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> str:
+    def store(self, text: str, metadata: Optional[Dict[str, Any]] = None,
+              common: bool = False) -> str:
         """
-        Store a memory with vector embedding
+        Store a memory with vector embedding.
+        
+        In multi-DB mode, stores to user's private DB by default.
+        Set common=True to store to the shared common DB.
+        In single-DB mode, common flag is ignored.
         
         Args:
             text: The memory text
             metadata: Optional metadata (source, tags, etc.)
+            common: Store to common DB instead of user DB (multi-DB only)
         
         Returns:
             Memory ID (str)
         """
+        if self._user_backend and not common:
+            return self._user_backend.store(text, metadata)
         return self._backend.store(text, metadata)
     
     def search(
@@ -130,7 +138,7 @@ class RaggerMemory:
     
     def delete(self, memory_id: str) -> bool:
         """
-        Delete a memory by ID
+        Delete a memory by ID. Tries user DB first, then common.
         
         Args:
             memory_id: Memory ID to delete
@@ -138,11 +146,14 @@ class RaggerMemory:
         Returns:
             True if deleted, False if not found
         """
+        if self._user_backend:
+            if self._user_backend.delete(memory_id):
+                return True
         return self._backend.delete(memory_id)
     
     def delete_batch(self, memory_ids: list) -> int:
         """
-        Delete multiple memories by ID
+        Delete multiple memories by ID. Tries both DBs.
         
         Args:
             memory_ids: List of memory IDs to delete
@@ -150,7 +161,10 @@ class RaggerMemory:
         Returns:
             Number of memories deleted
         """
-        return self._backend.delete_batch(memory_ids)
+        deleted = self._backend.delete_batch(memory_ids)
+        if self._user_backend:
+            deleted += self._user_backend.delete_batch(memory_ids)
+        return deleted
     
     def search_by_metadata(self, metadata_filter: dict, limit: int = None) -> list:
         """
