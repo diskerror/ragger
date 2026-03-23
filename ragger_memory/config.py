@@ -163,9 +163,17 @@ SERVER_LOCKED = {
     ("embedding", "model"),
     ("embedding", "dimensions"),
     ("embedding", "model_dir"),
-    # Chat hard limits (system controls the ceiling)
+    # System ceilings (system controls the max, user sets preference within)
     ("chat", "max_turn_retention_minutes"),
     ("chat", "max_turns_stored"),
+    ("chat", "max_persona_chars_limit"),
+    ("chat", "max_memory_results_limit"),
+    ("search", "max_search_limit"),
+    # All inference endpoint config (user can only pick model)
+    ("inference", "api_url"),
+    ("inference", "api_key"),
+    ("inference", "provider"),
+    ("inference", "max_tokens"),
 }
 
 
@@ -314,6 +322,7 @@ def load_config(path: str) -> dict:
 
         # Search
         "default_search_limit": getint("search", "default_limit", 5),
+        "max_search_limit": getint("search", "max_search_limit", 0),  # 0 = no ceiling
         "default_min_score": getfloat("search", "default_min_score", 0.4),
         "bm25_enabled": getbool("search", "bm25_enabled", True),
         "bm25_weight": getfloat("search", "bm25_weight", 3.0),
@@ -353,10 +362,29 @@ def load_config(path: str) -> dict:
         "chat_max_turns_stored": getint("chat", "max_turns_stored", 100),
         "chat_max_persona_chars": getint("chat", "max_persona_chars", 0),  # 0 = unlimited
         "chat_max_memory_results": getint("chat", "max_memory_results", 3),
+        # System ceilings (0 = no ceiling imposed)
+        "chat_max_persona_chars_limit": getint("chat", "max_persona_chars_limit", 0),
+        "chat_max_memory_results_limit": getint("chat", "max_memory_results_limit", 0),
 
         # User
         "user_mode": get("user", "mode", "memory-only"),
     }
+
+
+def _clamp_to_ceiling(cfg: dict, value_key: str, ceiling_key: str):
+    """
+    Clamp a user-set value to a system-imposed ceiling.
+    
+    Ceiling of 0 means no limit imposed.
+    Value of 0 means "unlimited" — ceiling still applies (0 becomes ceiling).
+    """
+    ceiling = cfg.get(ceiling_key, 0)
+    if ceiling <= 0:
+        return  # no ceiling imposed
+    
+    value = cfg.get(value_key, 0)
+    if value <= 0 or value > ceiling:
+        cfg[value_key] = ceiling
 
 
 def load_layered_config(system_path: str | None, user_path: str | None) -> dict:
@@ -480,6 +508,13 @@ def load_layered_config(system_path: str | None, user_path: str | None) -> dict:
         user_endpoints = _parse_inference_endpoints(user_parser)
         if user_endpoints:
             cfg["inference_endpoints"] = user_endpoints
+
+    # Clamp user values to system ceilings
+    _clamp_to_ceiling(cfg, "default_search_limit", "max_search_limit")
+    _clamp_to_ceiling(cfg, "chat_max_memory_results", "chat_max_memory_results_limit")
+    _clamp_to_ceiling(cfg, "chat_max_persona_chars", "chat_max_persona_chars_limit")
+    _clamp_to_ceiling(cfg, "chat_pause_minutes", "chat_max_turn_retention_minutes")
+    _clamp_to_ceiling(cfg, "chat_max_turns_stored", "chat_max_turns_stored")  # already locked, but belt-and-suspenders
 
     return cfg
 

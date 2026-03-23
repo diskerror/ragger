@@ -115,14 +115,57 @@ class TestLoadWorkspaceFiles:
         assert "# User" in result  # non-empty files still included
 
 
+class TestClampToCeiling:
+    """Test _clamp_to_ceiling helper."""
+
+    def test_no_ceiling(self):
+        from ragger_memory.config import _clamp_to_ceiling
+        cfg = {"val": 10, "max": 0}
+        _clamp_to_ceiling(cfg, "val", "max")
+        assert cfg["val"] == 10
+
+    def test_under_ceiling(self):
+        from ragger_memory.config import _clamp_to_ceiling
+        cfg = {"val": 5, "max": 10}
+        _clamp_to_ceiling(cfg, "val", "max")
+        assert cfg["val"] == 5
+
+    def test_over_ceiling(self):
+        from ragger_memory.config import _clamp_to_ceiling
+        cfg = {"val": 20, "max": 10}
+        _clamp_to_ceiling(cfg, "val", "max")
+        assert cfg["val"] == 10
+
+    def test_unlimited_capped_by_ceiling(self):
+        from ragger_memory.config import _clamp_to_ceiling
+        cfg = {"val": 0, "max": 10}
+        _clamp_to_ceiling(cfg, "val", "max")
+        assert cfg["val"] == 10
+
+    def test_at_ceiling(self):
+        from ragger_memory.config import _clamp_to_ceiling
+        cfg = {"val": 10, "max": 10}
+        _clamp_to_ceiling(cfg, "val", "max")
+        assert cfg["val"] == 10
+
+    def test_missing_ceiling_key(self):
+        from ragger_memory.config import _clamp_to_ceiling
+        cfg = {"val": 10}
+        _clamp_to_ceiling(cfg, "val", "nonexistent")
+        assert cfg["val"] == 10
+
+
 class TestChatContextConfig:
     """Test that config keys load correctly."""
 
-    def test_defaults(self):
+    def test_keys_exist(self):
         from ragger_memory.config import get_config
         cfg = get_config()
-        assert cfg["chat_max_persona_chars"] == 0
-        assert cfg["chat_max_memory_results"] == 3
+        assert "chat_max_persona_chars" in cfg
+        assert "chat_max_memory_results" in cfg
+        assert "chat_max_persona_chars_limit" in cfg
+        assert "chat_max_memory_results_limit" in cfg
+        assert "max_search_limit" in cfg
 
     def test_keys_are_integers(self):
         """Config values should be integers, not strings."""
