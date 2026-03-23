@@ -297,23 +297,26 @@ def run_chat():
     max_turn_retention_minutes = cfg.get("chat_max_turn_retention_minutes", 60)
     max_turns_stored = cfg.get("chat_max_turns_stored", 100)
 
-    # Context sizing — dynamic from endpoint, with user preference as cap
+    # Context sizing — only constrain persona for small context windows
+    SMALL_CONTEXT_THRESHOLD = 32768  # tokens — below this, apply persona_pct
     user_max_persona = cfg.get("chat_max_persona_chars", 0)
     max_memory_results = cfg.get("chat_max_memory_results", 3)
     persona_pct = cfg.get("chat_persona_pct", 25)
     chars_per_token = cfg.get("chat_chars_per_token", 4.0)
 
-    # Check endpoint's context budget
-    persona_budget = inference.get_persona_budget(model, persona_pct, chars_per_token)
-    if persona_budget > 0:
-        # If user set an absolute cap, respect it
+    # Check endpoint's context window
+    ep = inference._resolve_endpoint(model)
+    if 0 < ep.max_context < SMALL_CONTEXT_THRESHOLD:
+        # Small context — apply percentage-based sizing
+        persona_budget = int(ep.max_context * chars_per_token * (persona_pct / 100.0))
+        persona_budget = max(persona_budget, 500)
         if user_max_persona > 0:
             max_persona_chars = min(user_max_persona, persona_budget)
         else:
             max_persona_chars = persona_budget
     else:
-        # No endpoint context info — fall back to user preference
-        max_persona_chars = user_max_persona
+        # Large or unknown context — load everything, user cap still applies
+        max_persona_chars = user_max_persona  # 0 = unlimited
 
     # Memory client
     use_client = is_daemon_running(cfg["host"], cfg["port"])
@@ -337,12 +340,12 @@ def run_chat():
 
     print(f"Ragger Chat (model: {model})")
     print(f"Turn storage: {store_turns}")
-    if persona_budget > 0:
-        ep = inference._resolve_endpoint(model)
+    if 0 < ep.max_context < SMALL_CONTEXT_THRESHOLD:
         print(f"Context: {ep.max_context} tokens ({ep.name}) → {persona_pct}% = {max_persona_chars} chars persona")
     else:
         persona_info = f"{max_persona_chars} chars" if max_persona_chars > 0 else "unlimited"
-        print(f"Persona: {persona_info} | Memory results: {max_memory_results}")
+        ctx_info = f"{ep.max_context} tokens" if ep.max_context > 0 else "unknown"
+        print(f"Context: {ctx_info} ({ep.name}) | Persona: {persona_info}")
     print("Type '/quit' or Ctrl+D to exit\n")
 
     def _store_turn(user_text: str, assistant_text: str):
