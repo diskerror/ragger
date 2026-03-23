@@ -60,13 +60,36 @@ class SqliteBackend(MemoryBackend):
     def _create_schema(self):
         """Create SQLite schema if it doesn't exist"""
         try:
+            # Users table — token-based auth, maps token → user
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL UNIQUE,
+                    token_hash TEXT NOT NULL,
+                    is_admin INTEGER NOT NULL DEFAULT 0,
+                    created TEXT NOT NULL,
+                    modified TEXT NOT NULL
+                )
+            """)
+
+            # Trigger: update modified timestamp on users
+            self.conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS users_modified
+                AFTER UPDATE ON users
+                BEGIN
+                    UPDATE users SET modified = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                    WHERE id = NEW.id;
+                END
+            """)
+
             self.conn.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self._memories_table} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     text TEXT NOT NULL,
                     embedding BLOB NOT NULL,
                     metadata TEXT,
-                    timestamp TEXT NOT NULL
+                    timestamp TEXT NOT NULL,
+                    user_id INTEGER REFERENCES users(id)
                 )
             """)
             
@@ -108,8 +131,9 @@ class SqliteBackend(MemoryBackend):
                 ON bm25_index (token)
             """)
             
-            # Migrate: if existing table lacks FK, rebuild it
+            # Migrations
             self._migrate_usage_fk()
+            self._migrate_add_user_id()
             
             self.conn.commit()
             logger.info("SQLite schema ensured")
@@ -160,6 +184,57 @@ class SqliteBackend(MemoryBackend):
         except sqlite3.Error as e:
             logger.warning(f"FK migration skipped: {e}")
     
+    def _migrate_add_user_id(self):
+        """Add user_id column to memories table if it doesn't exist."""
+        try:
+            cols = [row[1] for row in self.conn.execute(
+                f"PRAGMA table_info({self._memories_table})"
+            ).fetchall()]
+            if "user_id" not in cols:
+                self.conn.execute(
+                    f"ALTER TABLE {self._memories_table} ADD COLUMN "
+                    f"user_id INTEGER REFERENCES users(id)"
+                )
+                self.conn.commit()
+                logger.info(f"Migrated {self._memories_table}: added user_id column")
+        except sqlite3.Error as e:
+            logger.warning(f"user_id migration skipped: {e}")
+
+    # --- User management ---
+
+    def create_user(self, username: str, token_hash: str,
+                    is_admin: bool = False) -> int:
+        """Create a user. Returns user id."""
+        now = datetime.now(timezone.utc).isoformat()
+        cursor = self.conn.execute(
+            "INSERT INTO users (username, token_hash, is_admin, created, modified) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (username, token_hash, 1 if is_admin else 0, now, now)
+        )
+        self.conn.commit()
+        return cursor.lastrowid
+
+    def get_user_by_token_hash(self, token_hash: str) -> dict | None:
+        """Look up user by token hash. Returns dict or None."""
+        row = self.conn.execute(
+            "SELECT id, username, is_admin FROM users WHERE token_hash = ?",
+            (token_hash,)
+        ).fetchone()
+        if row:
+            return {"id": row[0], "username": row[1], "is_admin": bool(row[2])}
+        return None
+
+    def get_user_by_username(self, username: str) -> dict | None:
+        """Look up user by username. Returns dict or None."""
+        row = self.conn.execute(
+            "SELECT id, username, is_admin, token_hash FROM users WHERE username = ?",
+            (username,)
+        ).fetchone()
+        if row:
+            return {"id": row[0], "username": row[1],
+                    "is_admin": bool(row[2]), "token_hash": row[3]}
+        return None
+
     def store_raw(
         self,
         text: str,

@@ -3,8 +3,12 @@ Authentication utilities for Ragger Memory
 
 Token-based auth for API access. Tokens are generated on first run
 and stored in ~/.ragger/token with restricted permissions.
+
+Token hashing: tokens are stored as SHA-256 hashes in the DB.
+The raw token lives only in the user's token file.
 """
 
+import hashlib
 import os
 import secrets
 import stat
@@ -13,6 +17,11 @@ import stat
 def token_path() -> str:
     """Path to the user's token file"""
     return os.path.expanduser("~/.ragger/token")
+
+
+def hash_token(token: str) -> str:
+    """SHA-256 hash of a token for DB storage."""
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def generate_token() -> str:

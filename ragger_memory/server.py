@@ -7,7 +7,7 @@ import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from .memory import RaggerMemory
-from .auth import load_token, validate_token
+from .auth import load_token, validate_token, hash_token, ensure_token
 
 logger = logging.getLogger(__name__)
 # Dedicated HTTP log (request/response details)
@@ -24,14 +24,33 @@ _server_token = None  # None = auth disabled (backward compat)
 class RaggerHandler(BaseHTTPRequestHandler):
     """HTTP request handler for memory operations"""
 
-    def _check_auth(self) -> bool:
-        """Check bearer token if auth is enabled. Returns True if authorized."""
+    def _check_auth(self) -> dict | None:
+        """
+        Check bearer token and resolve to user.
+        
+        Returns user dict {"id": ..., "username": ..., "is_admin": ...}
+        or None if auth fails. Returns a default user dict if auth is disabled.
+        """
         if _server_token is None:
-            return True  # Auth disabled
+            return {"id": None, "username": "anonymous", "is_admin": True}
+        
         auth = self.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            return validate_token(auth[7:], _server_token)
-        return False
+        if not auth.startswith("Bearer "):
+            return None
+        
+        token = auth[7:]
+        
+        # First try DB lookup by token hash
+        if _memory and hasattr(_memory, '_backend'):
+            user = _memory._backend.get_user_by_token_hash(hash_token(token))
+            if user:
+                return user
+        
+        # Fallback: direct token comparison (backward compat)
+        if validate_token(token, _server_token):
+            return {"id": None, "username": "default", "is_admin": True}
+        
+        return None
 
     def _read_body(self) -> dict:
         length = int(self.headers.get('Content-Length', 0))
@@ -174,6 +193,19 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         print("Auth: disabled (no token file found)")
     
     _memory = RaggerMemory()
+
+    # Bootstrap default user in single-user mode
+    if _server_token and hasattr(_memory, '_backend'):
+        backend = _memory._backend
+        hashed = hash_token(_server_token)
+        existing = backend.get_user_by_token_hash(hashed)
+        if not existing:
+            import getpass
+            username = getpass.getuser()
+            user_id = backend.create_user(username, hashed, is_admin=True)
+            print(f"Created default user: {username} (id={user_id})")
+        else:
+            print(f"User: {existing['username']} (id={existing['id']})")
     
     server = HTTPServer((host, port), RaggerHandler)
     print(lang.MSG_SERVER_RUNNING.format(host=host, port=port))
