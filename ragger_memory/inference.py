@@ -153,14 +153,17 @@ class InferenceClient:
 
         return cls(endpoints=endpoints, model=model, max_tokens=max_tokens)
 
-    def get_context_budget(self, model: Optional[str] = None) -> int:
+    def get_persona_budget(self, model: Optional[str] = None,
+                           persona_pct: int = 25,
+                           chars_per_token: float = 4.0) -> int:
         """
-        Get available context for system prompt content (persona + memories).
+        Get chars available for persona files based on endpoint context window.
         
-        Returns chars available after reserving space for max_tokens (output)
-        and a conversation buffer. Returns 0 if max_context unknown.
+        Args:
+            persona_pct: Percentage of context window for persona (default 25)
+            chars_per_token: Approximate chars per token (default 4.0)
         
-        Assumes ~4 chars per token as a rough estimate.
+        Returns chars budget, or 0 if max_context unknown.
         """
         use_model = model or self.model
         endpoint = self._resolve_endpoint(use_model)
@@ -168,15 +171,8 @@ class InferenceClient:
         if endpoint.max_context <= 0:
             return 0  # unknown — caller should use max_persona_chars
         
-        chars_per_token = 4  # conservative estimate
-        total_chars = endpoint.max_context * chars_per_token
-        
-        # Reserve space for output and conversation history
-        output_reserve = self.max_tokens * chars_per_token
-        conversation_reserve = min(total_chars // 4, 32000)  # 25% or 32K, whichever is less
-        
-        available = total_chars - output_reserve - conversation_reserve
-        return max(available, 1000)  # floor at 1000 chars
+        budget = int(endpoint.max_context * chars_per_token * (persona_pct / 100.0))
+        return max(budget, 500)  # floor at 500 chars
 
     def chat(
         self,

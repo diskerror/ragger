@@ -363,6 +363,8 @@ def load_config(path: str) -> dict:
         "chat_max_turns_stored": getint("chat", "max_turns_stored", 100),
         "chat_max_persona_chars": getint("chat", "max_persona_chars", 0),  # 0 = unlimited
         "chat_max_memory_results": getint("chat", "max_memory_results", 3),
+        "chat_persona_pct": getint("chat", "persona_pct", 25),  # % of context for persona
+        "chat_chars_per_token": getfloat("chat", "chars_per_token", 4.0),
         # System ceilings (0 = no ceiling imposed)
         "chat_max_persona_chars_limit": getint("chat", "max_persona_chars_limit", 0),
         "chat_max_memory_results_limit": getint("chat", "max_memory_results_limit", 0),
@@ -457,6 +459,8 @@ def load_layered_config(system_path: str | None, user_path: str | None) -> dict:
             ("chat", "max_turns_stored"): "chat_max_turns_stored",
             ("chat", "max_persona_chars"): "chat_max_persona_chars",
             ("chat", "max_memory_results"): "chat_max_memory_results",
+            ("chat", "persona_pct"): "chat_persona_pct",
+            ("chat", "chars_per_token"): "chat_chars_per_token",
             # User
             ("user", "mode"): "user_mode",
         }
@@ -466,10 +470,12 @@ def load_layered_config(system_path: str | None, user_path: str | None) -> dict:
             "port", "embedding_dimensions", "default_search_limit",
             "inference_max_tokens", "minimum_chunk_size", "chat_pause_minutes",
             "chat_max_turn_retention_minutes", "chat_max_turns_stored",
-            "chat_max_persona_chars", "chat_max_memory_results"
+            "chat_max_persona_chars", "chat_max_memory_results",
+            "chat_persona_pct"
         }
         float_keys = {
-            "default_min_score", "bm25_weight", "vector_weight", "bm25_k1", "bm25_b"
+            "default_min_score", "bm25_weight", "vector_weight", "bm25_k1", "bm25_b",
+            "chat_chars_per_token"
         }
         bool_keys = {
             "single_user", "bm25_enabled", "query_log_enabled",
