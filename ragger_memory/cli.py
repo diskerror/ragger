@@ -297,9 +297,23 @@ def run_chat():
     max_turn_retention_minutes = cfg.get("chat_max_turn_retention_minutes", 60)
     max_turns_stored = cfg.get("chat_max_turns_stored", 100)
 
-    # Context sizing
-    max_persona_chars = cfg.get("chat_max_persona_chars", 0)
+    # Context sizing — dynamic from endpoint, with user preference as cap
+    user_max_persona = cfg.get("chat_max_persona_chars", 0)
     max_memory_results = cfg.get("chat_max_memory_results", 3)
+
+    # Check endpoint's context budget
+    context_budget = inference.get_context_budget(model)
+    if context_budget > 0:
+        # Dynamic: split budget between persona (70%) and memory results (30%)
+        persona_budget = int(context_budget * 0.7)
+        # If user set a preference, use the smaller of the two
+        if user_max_persona > 0:
+            max_persona_chars = min(user_max_persona, persona_budget)
+        else:
+            max_persona_chars = persona_budget
+    else:
+        # No endpoint context info — fall back to user preference
+        max_persona_chars = user_max_persona
 
     # Memory client
     use_client = is_daemon_running(cfg["host"], cfg["port"])
@@ -323,8 +337,12 @@ def run_chat():
 
     print(f"Ragger Chat (model: {model})")
     print(f"Turn storage: {store_turns}")
-    persona_info = f"{max_persona_chars} chars" if max_persona_chars > 0 else "unlimited"
-    print(f"Persona: {persona_info} | Memory results: {max_memory_results}")
+    if context_budget > 0:
+        ep = inference._resolve_endpoint(model)
+        print(f"Context: {ep.max_context} tokens ({ep.name}) → persona {max_persona_chars} chars")
+    else:
+        persona_info = f"{max_persona_chars} chars" if max_persona_chars > 0 else "unlimited"
+        print(f"Persona: {persona_info} | Memory results: {max_memory_results}")
     print("Type '/quit' or Ctrl+D to exit\n")
 
     def _store_turn(user_text: str, assistant_text: str):

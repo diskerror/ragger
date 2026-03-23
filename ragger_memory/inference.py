@@ -24,10 +24,11 @@ class Endpoint:
     """One inference endpoint with its URL, key, model patterns, and API format."""
 
     def __init__(self, name: str, api_url: str, api_key: str = "",
-                 models: str = "*", format: str = ""):
+                 models: str = "*", format: str = "", max_context: int = 0):
         self.name = name
         self.api_url = api_url.rstrip("/")
         self.api_key = api_key
+        self.max_context = max_context  # 0 = unknown/unlimited
         self._patterns = [p.strip() for p in models.split(",") if p.strip()]
         # Format: explicit, auto-detected, or default
         self.format_name = format or api_formats.detect_format(self.api_url)
@@ -136,6 +137,7 @@ class InferenceClient:
                 api_key=ep.get("api_key", ""),
                 models=ep.get("models", "*"),
                 format=ep.get("format", ""),
+                max_context=ep.get("max_context", 0),
             ))
 
         if not endpoints:
@@ -150,6 +152,31 @@ class InferenceClient:
             endpoints = others + named
 
         return cls(endpoints=endpoints, model=model, max_tokens=max_tokens)
+
+    def get_context_budget(self, model: Optional[str] = None) -> int:
+        """
+        Get available context for system prompt content (persona + memories).
+        
+        Returns chars available after reserving space for max_tokens (output)
+        and a conversation buffer. Returns 0 if max_context unknown.
+        
+        Assumes ~4 chars per token as a rough estimate.
+        """
+        use_model = model or self.model
+        endpoint = self._resolve_endpoint(use_model)
+        
+        if endpoint.max_context <= 0:
+            return 0  # unknown — caller should use max_persona_chars
+        
+        chars_per_token = 4  # conservative estimate
+        total_chars = endpoint.max_context * chars_per_token
+        
+        # Reserve space for output and conversation history
+        output_reserve = self.max_tokens * chars_per_token
+        conversation_reserve = min(total_chars // 4, 32000)  # 25% or 32K, whichever is less
+        
+        available = total_chars - output_reserve - conversation_reserve
+        return max(available, 1000)  # floor at 1000 chars
 
     def chat(
         self,
