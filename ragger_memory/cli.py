@@ -298,7 +298,7 @@ def run_chat():
     max_turns_stored = cfg.get("chat_max_turns_stored", 100)
 
     # Context sizing — only constrain persona for small context windows
-    SMALL_CONTEXT_THRESHOLD = 32768  # tokens — below this, apply persona_pct
+    PERSONA_SIZING_THRESHOLD = 32768  # tokens — below this, apply persona_pct
     user_max_persona = cfg.get("chat_max_persona_chars", 0)
     max_memory_results = cfg.get("chat_max_memory_results", 3)
     persona_pct = cfg.get("chat_persona_pct", 25)
@@ -306,7 +306,7 @@ def run_chat():
 
     # Check endpoint's context window
     ep = inference._resolve_endpoint(model)
-    if 0 < ep.max_context < SMALL_CONTEXT_THRESHOLD:
+    if 0 < ep.max_context < PERSONA_SIZING_THRESHOLD:
         # Small context — apply percentage-based sizing
         persona_budget = int(ep.max_context * chars_per_token * (persona_pct / 100.0))
         persona_budget = max(persona_budget, 500)
@@ -340,7 +340,7 @@ def run_chat():
 
     print(f"Ragger Chat (model: {model})")
     print(f"Turn storage: {store_turns}")
-    if 0 < ep.max_context < SMALL_CONTEXT_THRESHOLD:
+    if 0 < ep.max_context < PERSONA_SIZING_THRESHOLD:
         print(f"Context: {ep.max_context} tokens ({ep.name}) → {persona_pct}% = {max_persona_chars} chars persona")
     else:
         persona_info = f"{max_persona_chars} chars" if max_persona_chars > 0 else "unlimited"
