@@ -69,6 +69,9 @@ class RaggerMemory:
         Set common=True to store to the shared common DB.
         In single-DB mode, common flag is ignored.
         
+        When common=True, automatically adds "keep": true to metadata
+        to prevent deletion.
+        
         Args:
             text: The memory text
             metadata: Optional metadata (source, tags, etc.)
@@ -77,6 +80,12 @@ class RaggerMemory:
         Returns:
             Memory ID (str)
         """
+        # Auto-set "keep" tag when storing to common DB
+        if common:
+            if metadata is None:
+                metadata = {}
+            metadata["keep"] = True
+        
         if self._user_backend and not common:
             return self._user_backend.store(text, metadata)
         return self._backend.store(text, metadata)

@@ -552,15 +552,29 @@ class SqliteBackend(MemoryBackend):
     
     def delete(self, memory_id: str) -> bool:
         """
-        Delete a memory by ID.
+        Delete a memory by ID. Respects "keep" tag in metadata.
         
         Args:
             memory_id: Memory ID to delete
         
         Returns:
-            True if deleted, False if not found
+            True if deleted, False if not found or protected by "keep" tag
         """
         try:
+            # Check if memory has "keep" tag
+            row = self.conn.execute(
+                f"SELECT metadata FROM {self._memories_table} WHERE id = ?",
+                (int(memory_id),)
+            ).fetchone()
+            
+            if not row:
+                return False  # Not found
+            
+            metadata = json.loads(row[0]) if row[0] else {}
+            if metadata.get("keep"):
+                logger.info(f"Skipped deletion of memory {memory_id} (keep tag)")
+                return False
+            
             cursor = self.conn.execute(
                 f"DELETE FROM {self._memories_table} WHERE id = ?",
                 (int(memory_id),)
@@ -576,7 +590,7 @@ class SqliteBackend(MemoryBackend):
     
     def delete_batch(self, memory_ids: list) -> int:
         """
-        Delete multiple memories by ID.
+        Delete multiple memories by ID. Respects "keep" tag in metadata.
         
         Args:
             memory_ids: List of memory IDs to delete
@@ -587,10 +601,33 @@ class SqliteBackend(MemoryBackend):
         if not memory_ids:
             return 0
         try:
+            # Filter out memories with "keep" tag
             placeholders = ",".join("?" * len(memory_ids))
+            rows = self.conn.execute(
+                f"SELECT id, metadata FROM {self._memories_table} WHERE id IN ({placeholders})",
+                [int(mid) for mid in memory_ids]
+            ).fetchall()
+            
+            deletable = []
+            kept = []
+            for row in rows:
+                memory_id = row[0]
+                metadata = json.loads(row[1]) if row[1] else {}
+                if metadata.get("keep"):
+                    kept.append(memory_id)
+                else:
+                    deletable.append(memory_id)
+            
+            if kept:
+                logger.info(f"Skipped deletion of {len(kept)} memories with keep tag")
+            
+            if not deletable:
+                return 0
+            
+            placeholders = ",".join("?" * len(deletable))
             cursor = self.conn.execute(
                 f"DELETE FROM {self._memories_table} WHERE id IN ({placeholders})",
-                [int(mid) for mid in memory_ids]
+                deletable
             )
             self.conn.commit()
             count = cursor.rowcount

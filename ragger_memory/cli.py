@@ -489,6 +489,9 @@ def run_chat():
             except Exception as e:
                 logger.warning(f"Failed to store pause summary: {e}")
         unsummarized_turns = []
+        
+        # Expire old turns after summarization
+        _expire_old_turns()
 
     def _quit_summary():
         """Summarize full conversation on exit."""
@@ -510,7 +513,94 @@ def run_chat():
                 print(f" failed: {e}")
         else:
             print(" skipped (empty).")
+        
+        # Expire old turns after summarization
+        _expire_old_turns()
 
+    # Launch-time orphan check: summarize and clean up any raw turns from crashed session
+    def _check_orphaned_turns():
+        """Check for orphaned raw turns from a crashed session and summarize them."""
+        try:
+            # Find all raw conversation turns
+            turns = memory.search_by_metadata({
+                "category": "conversation",
+                "source": "ragger-chat"
+            })
+            
+            # Filter out session-mode entries and summaries
+            turns = [t for t in turns if t["metadata"].get("mode") != "session"]
+            
+            if not turns:
+                return
+            
+            # Check if these are orphans (no recent summary exists)
+            # If we have raw turns but we're starting fresh, they're likely from a crashed session
+            # For now, we'll check if there are any turns older than the last summary
+            summaries = memory.search_by_metadata({
+                "category": "conversation-summary",
+                "source": "ragger-chat"
+            })
+            
+            if not summaries:
+                # No summaries at all, but we have turns — they're orphans
+                if turns:
+                    logger.info(f"Found {len(turns)} orphaned turns from previous session, summarizing...")
+                    print(f"Recovering {len(turns)} orphaned conversation turns...", flush=True)
+                    
+                    # Build conversation text for summarization
+                    orphan_turns = []
+                    for turn in turns:
+                        # Parse the turn text to extract user/assistant exchanges
+                        text = turn["text"]
+                        if "User:" in text and "Assistant:" in text:
+                            parts = text.split("\n\n")
+                            for part in parts:
+                                if part.startswith("User:"):
+                                    orphan_turns.append({"role": "user", "content": part[5:].strip()})
+                                elif part.startswith("Assistant:"):
+                                    orphan_turns.append({"role": "assistant", "content": part[10:].strip()})
+                    
+                    if orphan_turns:
+                        summary = _summarize_conversation(inference, model, orphan_turns)
+                        if summary:
+                            memory.store(summary, {
+                                "collection": "memory",
+                                "category": "conversation-summary",
+                                "source": "ragger-chat",
+                                "turns": len(turns),
+                                "recovered": True,
+                            })
+                            logger.info(f"Stored recovery summary for {len(turns)} orphaned turns")
+                    
+                    # Now expire the old turns
+                    _expire_old_turns()
+                    print("✓ Recovery complete")
+            else:
+                # We have summaries - check if turns are newer than most recent summary
+                # Sort summaries by timestamp
+                summaries.sort(key=lambda s: s.get("timestamp", ""), reverse=True)
+                last_summary_time = summaries[0].get("timestamp", "") if summaries else ""
+                
+                # Check for turns newer than last summary (shouldn't happen normally)
+                # or turns from before last summary that weren't cleaned up
+                orphans = []
+                if last_summary_time:
+                    for turn in turns:
+                        turn_time = turn.get("timestamp", "")
+                        # If turn is significantly older than last summary, it's an orphan
+                        if turn_time < last_summary_time:
+                            orphans.append(turn)
+                
+                if orphans and len(orphans) > len(turns) * 0.5:
+                    # If more than half are orphans, likely a cleanup issue
+                    logger.info(f"Found {len(orphans)} old turns, cleaning up...")
+                    _expire_old_turns()
+        
+        except Exception as e:
+            logger.warning(f"Orphan check failed: {e}")
+    
+    _check_orphaned_turns()
+    
     # Clean up old turns at startup
     _expire_old_turns()
 
@@ -588,9 +678,6 @@ def run_chat():
             unsummarized_turns.append({"role": "user", "content": user_input})
             unsummarized_turns.append({"role": "assistant", "content": response_text})
             last_activity = time.time()
-            
-            # Check for expired turns after each exchange
-            _expire_old_turns()
 
             print()  # blank line between exchanges
 
