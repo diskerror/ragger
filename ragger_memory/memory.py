@@ -83,21 +83,50 @@ class RaggerMemory:
         """
         Vector search for relevant memories using cosine similarity.
         
+        In multi-DB mode, searches both common and user DBs,
+        merges results by score, and returns the top `limit`.
+        
         Args:
             query: Search query text
             limit: Maximum results to return
             min_score: Minimum similarity score (0.0-1.0)
             collections: Collections to search. None = all collections.
-                         Use explicit list to narrow, e.g. ["memory"] or ["sibelius"].
         
         Returns:
             Dict with 'results' list and 'timing' dict
         """
-        return self._backend.search(query, limit, min_score, collections)
+        if not self._user_backend:
+            return self._backend.search(query, limit, min_score, collections)
+        
+        # Multi-DB: query both, merge by score
+        common_result = self._backend.search(query, limit, min_score, collections)
+        user_result = self._user_backend.search(query, limit, min_score, collections)
+        
+        # Merge results, sort by score descending, take top limit
+        all_results = common_result.get("results", []) + user_result.get("results", [])
+        all_results.sort(key=lambda r: r.get("score", 0), reverse=True)
+        
+        # Merge timing info
+        ct = common_result.get("timing", {})
+        ut = user_result.get("timing", {})
+        merged_timing = {
+            "embedding_ms": ct.get("embedding_ms", 0),  # same query, same embedding
+            "search_ms": (ct.get("search_ms", 0) or 0) + (ut.get("search_ms", 0) or 0),
+            "total_ms": (ct.get("total_ms", 0) or 0) + (ut.get("total_ms", 0) or 0),
+            "corpus_size": (ct.get("corpus_size", 0) or 0) + (ut.get("corpus_size", 0) or 0),
+        }
+        
+        return {
+            "results": all_results[:limit],
+            "timing": merged_timing,
+        }
     
     def count(self) -> int:
-        """Return number of stored memories"""
-        return self._backend.count()
+        """Return number of stored memories (across all DBs)"""
+        total = self._backend.count()
+        if self._user_backend:
+            total += self._user_backend.count()
+        return total
     
     def delete(self, memory_id: str) -> bool:
         """
@@ -125,7 +154,7 @@ class RaggerMemory:
     
     def search_by_metadata(self, metadata_filter: dict, limit: int = None) -> list:
         """
-        Search memories by metadata fields
+        Search memories by metadata fields (across all DBs).
         
         Args:
             metadata_filter: Dict of metadata fields to match
@@ -134,7 +163,13 @@ class RaggerMemory:
         Returns:
             List of dicts with id, text, metadata, timestamp
         """
-        return self._backend.search_by_metadata(metadata_filter, limit)
+        results = self._backend.search_by_metadata(metadata_filter, limit)
+        if self._user_backend:
+            user_results = self._user_backend.search_by_metadata(metadata_filter, limit)
+            results = results + user_results
+            if limit:
+                results = results[:limit]
+        return results
     
     def close(self):
         """Close backend connection(s)"""
