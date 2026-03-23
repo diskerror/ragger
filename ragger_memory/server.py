@@ -46,8 +46,18 @@ class RaggerHandler(BaseHTTPRequestHandler):
             if user:
                 return user
         
-        # Fallback: direct token comparison (backward compat)
+        # Fallback: direct token comparison (pre-bootstrap requests)
+        # Auto-create user in DB so future lookups use the fast path
         if validate_token(token, _server_token):
+            if _memory and hasattr(_memory, '_backend'):
+                import getpass
+                hashed = hash_token(token)
+                username = getpass.getuser()
+                try:
+                    user_id = _memory._backend.create_user(username, hashed, is_admin=True)
+                    return {"id": user_id, "username": username, "is_admin": True}
+                except Exception:
+                    pass  # user may already exist (race condition)
             return {"id": None, "username": "default", "is_admin": True}
         
         return None
