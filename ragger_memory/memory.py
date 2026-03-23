@@ -15,17 +15,24 @@ logger = logging.getLogger(__name__)
 
 
 class RaggerMemory:
-    """Factory facade — creates the right backend based on config"""
+    """Factory facade — creates the right backend based on config.
     
-    def __init__(self, uri: Optional[str] = None, engine: Optional[str] = None):
+    Single-user: one backend (user's DB).
+    Multi-user: two backends — common DB (shared) + user DB (private).
+    Search merges both. Store routes by collection/flag.
+    """
+    
+    def __init__(self, uri: Optional[str] = None, engine: Optional[str] = None,
+                 user_db_path: Optional[str] = None):
         """
-        Initialize memory store with appropriate backend
+        Initialize memory store with appropriate backend(s).
         
         Args:
-            uri: File path for SQLite database.
-                 Defaults to the value in config.
+            uri: File path for primary database. Defaults to config.
             engine: Storage engine (currently "sqlite").
-                    Defaults to config.STORAGE_ENGINE.
+            user_db_path: Path to user's private DB (multi-user mode).
+                          If provided, uri becomes the common DB path
+                          and user_db_path becomes the user's private DB.
         """
         from .config import STORAGE_ENGINE
         self.engine = engine or STORAGE_ENGINE
@@ -37,10 +44,21 @@ class RaggerMemory:
             from .sqlite_backend import SqliteBackend
             self._backend = SqliteBackend(embedder, uri)
             logger.info(lang.MSG_USING_SQLITE)
+            
+            # Multi-user: open a second backend for the user's private DB
+            self._user_backend = None
+            if user_db_path:
+                self._user_backend = SqliteBackend(embedder, user_db_path)
+                logger.info(f"User DB: {user_db_path}")
         else:
             raise ValueError(
                 lang.ERR_UNKNOWN_ENGINE.format(engine=self.engine)
             )
+    
+    @property
+    def is_multi_db(self) -> bool:
+        """True if operating with separate common + user databases."""
+        return self._user_backend is not None
     
     def store(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> str:
         """
@@ -119,8 +137,10 @@ class RaggerMemory:
         return self._backend.search_by_metadata(metadata_filter, limit)
     
     def close(self):
-        """Close backend connection"""
+        """Close backend connection(s)"""
         self._backend.close()
+        if self._user_backend:
+            self._user_backend.close()
     
     @staticmethod
     def download_model():
