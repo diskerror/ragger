@@ -141,7 +141,7 @@ def import_file(
     print(f"✓ Imported {len(chunks)} chunks")
 
 
-def _load_workspace_files() -> str:
+def _load_workspace_files(max_chars: int = 0) -> str:
     """
     Load workspace MD files for the system prompt.
 
@@ -151,6 +151,12 @@ def _load_workspace_files() -> str:
     User files (personal, private): ~/.ragger/ only
       - USER.md, MEMORY.md
 
+    Args:
+        max_chars: Maximum total characters to return. 0 = unlimited.
+                   When limited, files are included in priority order
+                   (SOUL > USER > AGENTS > TOOLS > MEMORY) and
+                   the last included file is truncated to fit.
+
     Returns combined text for injection into system prompt.
     """
     from .config import expand_path, system_data_dir
@@ -158,24 +164,55 @@ def _load_workspace_files() -> str:
     user_dir = expand_path("~/.ragger")
     common_dir = system_data_dir()  # /var/ragger/
 
+    # Priority order: identity first, reference last
+    file_list = [
+        # (filename, search_common_first)
+        ("SOUL.md", True),
+        ("USER.md", False),    # user-only
+        ("AGENTS.md", True),
+        ("TOOLS.md", True),
+        ("MEMORY.md", False),  # user-only
+    ]
+
     sections = []
+    total = 0
 
-    # System files: /var/ragger/ first, ~/.ragger/ fallback
-    for filename in ("SOUL.md", "AGENTS.md", "TOOLS.md"):
-        path = os.path.join(common_dir, filename)
-        if not os.path.isfile(path):
-            path = os.path.join(user_dir, filename)
-        if os.path.isfile(path):
-            with open(path, "r") as f:
-                sections.append(f.read().strip())
+    for filename, search_common in file_list:
+        path = None
+        if search_common:
+            candidate = os.path.join(common_dir, filename)
+            if os.path.isfile(candidate):
+                path = candidate
+        if path is None:
+            candidate = os.path.join(user_dir, filename)
+            if os.path.isfile(candidate):
+                path = candidate
+        if path is None:
+            continue
 
-    # User files: ~/.ragger/ only
-    for filename in ("USER.md", "MEMORY.md"):
-        path = os.path.join(user_dir, filename)
-        if os.path.isfile(path):
-            with open(path, "r") as f:
-                sections.append(f.read().strip())
-    
+        with open(path, "r") as f:
+            content = f.read().strip()
+
+        if not content:
+            continue
+
+        if max_chars > 0:
+            remaining = max_chars - total - (len("\n\n---\n\n") * len(sections))
+            if remaining <= 0:
+                break
+            if len(content) > remaining:
+                # Truncate to fit, try to break at a paragraph
+                content = content[:remaining]
+                last_break = content.rfind('\n\n')
+                if last_break > remaining // 2:
+                    content = content[:last_break]
+                content += f"\n\n[... {filename} truncated ...]"
+                sections.append(content)
+                break
+
+        sections.append(content)
+        total += len(content)
+
     return "\n\n---\n\n".join(sections) if sections else ""
 
 
@@ -260,6 +297,10 @@ def run_chat():
     max_turn_retention_minutes = cfg.get("chat_max_turn_retention_minutes", 60)
     max_turns_stored = cfg.get("chat_max_turns_stored", 100)
 
+    # Context sizing
+    max_persona_chars = cfg.get("chat_max_persona_chars", 0)
+    max_memory_results = cfg.get("chat_max_memory_results", 3)
+
     # Memory client
     use_client = is_daemon_running(cfg["host"], cfg["port"])
     if use_client:
@@ -269,7 +310,7 @@ def run_chat():
         memory = RaggerMemory()
 
     # Load workspace files for persona
-    workspace = _load_workspace_files()
+    workspace = _load_workspace_files(max_chars=max_persona_chars)
 
     # Conversation state
     messages = []
@@ -282,6 +323,8 @@ def run_chat():
 
     print(f"Ragger Chat (model: {model})")
     print(f"Turn storage: {store_turns}")
+    persona_info = f"{max_persona_chars} chars" if max_persona_chars > 0 else "unlimited"
+    print(f"Persona: {persona_info} | Memory results: {max_memory_results}")
     print("Type '/quit' or Ctrl+D to exit\n")
 
     def _store_turn(user_text: str, assistant_text: str):
@@ -473,7 +516,7 @@ def run_chat():
             # Search memory for context
             context_chunks = []
             try:
-                result = memory.search(user_input, limit=3, min_score=0.3)
+                result = memory.search(user_input, limit=max_memory_results, min_score=0.3)
                 results = result.get("results", [])
                 if results:
                     context_chunks = [r["text"] for r in results]
