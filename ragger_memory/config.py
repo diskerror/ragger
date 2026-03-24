@@ -490,8 +490,10 @@ def load_layered_config(system_path: str | None, user_path: str | None) -> dict:
                 section_key = (section, key)
                 
                 # Skip server-locked keys
+                # In single_user mode, log_dir is user-overridable
                 if section_key in SERVER_LOCKED:
-                    continue
+                    if not (cfg.get("single_user", True) and section_key == ("logging", "log_dir")):
+                        continue
                 
                 # Skip [inference.*] sections — handled by _parse_inference_endpoints
                 if section.startswith("inference."):
@@ -522,10 +524,6 @@ def load_layered_config(system_path: str | None, user_path: str | None) -> dict:
     _clamp_to_ceiling(cfg, "chat_max_persona_chars", "chat_max_persona_chars_limit")
     _clamp_to_ceiling(cfg, "chat_pause_minutes", "chat_max_turn_retention_minutes")
     _clamp_to_ceiling(cfg, "chat_max_turns_stored", "chat_max_turns_stored")  # already locked, but belt-and-suspenders
-
-    # single_user mode: force logs to user directory
-    if cfg.get("single_user", True):
-        cfg["log_dir"] = "~/.ragger"
 
     return cfg
 
