@@ -203,14 +203,15 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     else:
         print("Auth: disabled (no token file found)")
     
-    from .config import config
-    if config.single_user:
+    from .config import get_config
+    cfg = get_config()
+    if cfg.get("single_user", True):
         _memory = RaggerMemory()
     else:
         # Multi-user: common DB (shared) + user DB (private)
         import os
-        common_path = os.path.expanduser(config.common_db_path)
-        user_path = os.path.expanduser(config.db_path)
+        common_path = os.path.expanduser(cfg["common_db_path"])
+        user_path = os.path.expanduser(cfg["db_path"])
         _memory = RaggerMemory(uri=common_path, user_db_path=user_path)
         print(f"Multi-user mode: common={common_path}, user={user_path}")
 
