@@ -158,6 +158,7 @@ SERVER_LOCKED = {
     ("server", "host"),
     ("server", "port"),
     ("storage", "db_path"),
+    ("storage", "common_db_path"),
     ("storage", "formats_dir"),
     ("logging", "log_dir"),
     ("embedding", "model"),
@@ -313,6 +314,7 @@ def load_config(path: str) -> dict:
 
         # Storage
         "db_path": get("storage", "db_path", "~/.ragger/memories.db"),
+        "common_db_path": get("storage", "common_db_path", "/var/ragger/memories.db"),
         "default_collection": get("storage", "default_collection", "memory"),
         "formats_dir": get("storage", "formats_dir", "/var/ragger/formats"),
 
@@ -420,6 +422,7 @@ def load_layered_config(system_path: str | None, user_path: str | None) -> dict:
             ("server", "single_user"): "single_user",
             # Storage
             ("storage", "db_path"): "db_path",
+            ("storage", "common_db_path"): "common_db_path",
             ("storage", "default_collection"): "default_collection",
             ("storage", "formats_dir"): "formats_dir",
             # Embedding

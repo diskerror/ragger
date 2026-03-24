@@ -214,7 +214,7 @@ class SqliteBackend(MemoryBackend):
     def create_user(self, username: str, token_hash: str,
                     is_admin: bool = False) -> int:
         """Create a user. Returns user id."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         cursor = self.conn.execute(
             "INSERT INTO users (username, token_hash, is_admin, created, modified) "
             "VALUES (?, ?, ?, ?, ?)",
@@ -278,7 +278,7 @@ class SqliteBackend(MemoryBackend):
             tags_str = ",".join(tag_list)
             
             metadata_json = json.dumps(metadata) if metadata else None
-            timestamp_str = timestamp.isoformat()
+            timestamp_str = timestamp.strftime('%Y-%m-%dT%H:%M:%SZ')
             
             cursor = self.conn.execute(
                 f"INSERT INTO {self._memories_table} "
@@ -440,7 +440,7 @@ class SqliteBackend(MemoryBackend):
         """Log a search query to query.log as single-line JSON"""
         try:
             log_entry = {
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
                 "query": query,
                 "limit": limit,
                 "min_score": min_score,
@@ -475,7 +475,7 @@ class SqliteBackend(MemoryBackend):
         if not USAGE_TRACKING_ENABLED or not memory_ids:
             return
         try:
-            timestamp = datetime.now(timezone.utc).isoformat()
+            timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
             self.conn.executemany(
                 f"INSERT INTO {self._usage_table} (memory_id, timestamp) VALUES (?, ?)",
                 [(int(mid), timestamp) for mid in memory_ids]

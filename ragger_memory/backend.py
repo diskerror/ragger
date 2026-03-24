@@ -293,7 +293,7 @@ class MemoryBackend(ABC):
                 # Normalize timestamp to ISO string if it's a datetime
                 ts = timestamps[idx]
                 if isinstance(ts, datetime):
-                    ts = ts.isoformat()
+                    ts = ts.strftime('%Y-%m-%dT%H:%M:%SZ')
                 
                 results.append({
                     "id": ids[idx],

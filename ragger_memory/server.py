@@ -92,7 +92,8 @@ class RaggerHandler(BaseHTTPRequestHandler):
                 # Default collection to "memory" if not specified
                 if 'collection' not in metadata:
                     metadata['collection'] = 'memory'
-                memory_id = _memory.store(text, metadata)
+                common = params.get('common', False)
+                memory_id = _memory.store(text, metadata, common=common)
                 self._respond(200, {"id": memory_id, "status": "stored"})
             
             elif self.path == '/search':
@@ -202,7 +203,16 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     else:
         print("Auth: disabled (no token file found)")
     
-    _memory = RaggerMemory()
+    from .config import config
+    if config.single_user:
+        _memory = RaggerMemory()
+    else:
+        # Multi-user: common DB (shared) + user DB (private)
+        import os
+        common_path = os.path.expanduser(config.common_db_path)
+        user_path = os.path.expanduser(config.db_path)
+        _memory = RaggerMemory(uri=common_path, user_db_path=user_path)
+        print(f"Multi-user mode: common={common_path}, user={user_path}")
 
     # Bootstrap default user in single-user mode
     if _server_token and hasattr(_memory, '_backend'):
