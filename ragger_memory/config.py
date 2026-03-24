@@ -490,10 +490,8 @@ def load_layered_config(system_path: str | None, user_path: str | None) -> dict:
                 section_key = (section, key)
                 
                 # Skip server-locked keys
-                # In single_user mode, log_dir is user-overridable
                 if section_key in SERVER_LOCKED:
-                    if not (cfg.get("single_user", True) and section_key == ("logging", "log_dir")):
-                        continue
+                    continue
                 
                 # Skip [inference.*] sections — handled by _parse_inference_endpoints
                 if section.startswith("inference."):
