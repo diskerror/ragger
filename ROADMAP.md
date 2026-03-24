@@ -63,6 +63,11 @@ critical.
   via `users` table in common DB. The user never sees or manages their user_id.
 - **Browser (future `ragger chat` web UI)**: Hashed password + session cookies.
   Separate auth concern from API tokens.
+- **Token rotation**: Configurable `token_rotation_minutes` (default 1440 = 24h,
+  0 = never). Daemon checks token age on each request; when expired, generates
+  new token, writes to `~user/.ragger/token`, updates hash in users table.
+  Client re-reads token on 401 and retries once. Prevents tokens in old backups
+  from being usable.
 
 ### Runtime Model
 - **Single process**, single port, single loaded embedding model
