@@ -70,19 +70,24 @@ class TestSqliteStoreAndRetrieve:
         mid = sqlite_backend.store("memory with metadata", meta)
         
         row = sqlite_backend.conn.execute(
-            "SELECT metadata FROM memories WHERE id = ?", (int(mid),)
+            "SELECT metadata, collection FROM memories WHERE id = ?", (int(mid),)
         ).fetchone()
-        stored_meta = json.loads(row[0])
+        stored_meta = json.loads(row[0]) if row[0] else {}
         assert stored_meta["source"] == "test.md"
-        assert stored_meta["collection"] == "docs"
+        # collection is now a dedicated column, not in JSON metadata
+        assert row[1] == "docs"
     
     def test_store_empty_metadata(self, sqlite_backend):
         mid = sqlite_backend.store("no metadata")
         row = sqlite_backend.conn.execute(
-            "SELECT metadata FROM memories WHERE id = ?", (int(mid),)
+            "SELECT metadata, collection, category, tags FROM memories WHERE id = ?", (int(mid),)
         ).fetchone()
-        stored_meta = json.loads(row[0])
+        stored_meta = json.loads(row[0]) if row[0] else {}
         assert isinstance(stored_meta, dict)
+        # Dedicated columns get defaults
+        assert row[1] == "memory"
+        assert row[2] == ""
+        assert row[3] == ""
     
     def test_embedding_stored_as_blob(self, sqlite_backend):
         sqlite_backend.store("test embedding storage")

@@ -134,6 +134,7 @@ class SqliteBackend(MemoryBackend):
             # Migrations
             self._migrate_usage_fk()
             self._migrate_add_user_id()
+            self._migrate_dedicated_columns()
             
             self.conn.commit()
             logger.info("SQLite schema ensured")
@@ -200,6 +201,14 @@ class SqliteBackend(MemoryBackend):
         except sqlite3.Error as e:
             logger.warning(f"user_id migration skipped: {e}")
 
+    def _migrate_dedicated_columns(self):
+        """Add collection, category, tags columns and backfill from JSON metadata."""
+        from .migrations import migrate_add_dedicated_columns
+        try:
+            migrate_add_dedicated_columns(self.conn, self._memories_table)
+        except sqlite3.Error as e:
+            logger.warning(f"dedicated columns migration skipped: {e}")
+
     # --- User management ---
 
     def create_user(self, username: str, token_hash: str,
@@ -246,13 +255,27 @@ class SqliteBackend(MemoryBackend):
         try:
             embedding_array = np.array(embedding, dtype=np.float32)
             embedding_blob = embedding_array.tobytes()
-            metadata_json = json.dumps(metadata)
+            
+            # Extract dedicated columns from metadata
+            collection = metadata.pop("collection", "memory")
+            category = metadata.pop("category", "")
+            tags_val = metadata.pop("tags", "")
+            if isinstance(tags_val, list):
+                tags_str = ",".join(str(t) for t in tags_val)
+            elif isinstance(tags_val, str):
+                tags_str = tags_val
+            else:
+                tags_str = ""
+            
+            metadata_json = json.dumps(metadata) if metadata else None
             timestamp_str = timestamp.isoformat()
             
             cursor = self.conn.execute(
-                f"INSERT INTO {self._memories_table} (text, embedding, metadata, timestamp) "
-                f"VALUES (?, ?, ?, ?)",
-                (text, embedding_blob, metadata_json, timestamp_str)
+                f"INSERT INTO {self._memories_table} "
+                f"(text, embedding, metadata, timestamp, collection, category, tags) "
+                f"VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (text, embedding_blob, metadata_json, timestamp_str,
+                 collection, category, tags_str)
             )
             
             memory_id = cursor.lastrowid
@@ -283,11 +306,23 @@ class SqliteBackend(MemoryBackend):
             [(memory_id, token, freq) for token, freq in tf.items()]
         )
     
+    def _reconstruct_metadata(self, row_meta_json: str,
+                              collection: str, category: str, tags: str) -> dict:
+        """Reconstruct full metadata dict from dedicated columns + JSON remainder."""
+        meta = json.loads(row_meta_json) if row_meta_json else {}
+        meta["collection"] = collection or "memory"
+        if category:
+            meta["category"] = category
+        if tags:
+            meta["tags"] = tags.split(",")
+        return meta
+
     def load_all_embeddings(self) -> tuple[list, list, np.ndarray, list, list]:
         """Load all embeddings from SQLite"""
         try:
             cursor = self.conn.execute(
-                f"SELECT id, text, embedding, metadata, timestamp FROM {self._memories_table}"
+                f"SELECT id, text, embedding, metadata, timestamp, "
+                f"collection, category, tags FROM {self._memories_table}"
             )
             rows = cursor.fetchall()
             
@@ -305,7 +340,7 @@ class SqliteBackend(MemoryBackend):
             
             metadata = []
             for row in rows:
-                meta = json.loads(row[3]) if row[3] else {}
+                meta = self._reconstruct_metadata(row[3], row[5], row[6], row[7])
                 metadata.append(meta)
             
             timestamps = [row[4] for row in rows]
@@ -325,32 +360,57 @@ class SqliteBackend(MemoryBackend):
         """
         Search memories by metadata fields.
         
+        Uses SQL WHERE for dedicated columns (collection, category, tags)
+        and Python-side filtering for remaining JSON metadata fields.
+        
         Args:
-            metadata_filter: Dict of metadata fields to match (e.g., {"category": "conversation", "source": "ragger-chat"})
+            metadata_filter: Dict of metadata fields to match
             limit: Maximum results to return (None = all)
         
         Returns:
             List of dicts with id, text, metadata, timestamp
         """
         try:
-            cursor = self.conn.execute(
-                f"SELECT id, text, metadata, timestamp FROM {self._memories_table}"
-            )
+            # Build SQL WHERE for dedicated columns
+            dedicated = {"collection", "category", "tags"}
+            sql_conditions = []
+            sql_params = []
+            json_filter = {}
+            
+            for k, v in metadata_filter.items():
+                if k in dedicated:
+                    if k == "tags":
+                        # Tags is comma-separated; check if value is in the list
+                        sql_conditions.append(f"(',' || tags || ',' LIKE ?)")
+                        sql_params.append(f"%,{v},%")
+                    else:
+                        sql_conditions.append(f"{k} = ?")
+                        sql_params.append(v)
+                else:
+                    json_filter[k] = v
+            
+            sql = (f"SELECT id, text, metadata, timestamp, collection, category, tags "
+                   f"FROM {self._memories_table}")
+            if sql_conditions:
+                sql += " WHERE " + " AND ".join(sql_conditions)
+            
+            cursor = self.conn.execute(sql, sql_params)
             rows = cursor.fetchall()
             
             results = []
             for row in rows:
-                meta = json.loads(row[2]) if row[2] else {}
-                # Check if all filter fields match
-                if all(meta.get(k) == v for k, v in metadata_filter.items()):
-                    results.append({
-                        "id": str(row[0]),
-                        "text": row[1],
-                        "metadata": meta,
-                        "timestamp": row[3]
-                    })
-                    if limit and len(results) >= limit:
-                        break
+                meta = self._reconstruct_metadata(row[2], row[4], row[5], row[6])
+                # Check remaining JSON fields
+                if json_filter and not all(meta.get(k) == v for k, v in json_filter.items()):
+                    continue
+                results.append({
+                    "id": str(row[0]),
+                    "text": row[1],
+                    "metadata": meta,
+                    "timestamp": row[3]
+                })
+                if limit and len(results) >= limit:
+                    break
             
             return results
         except Exception as e:
