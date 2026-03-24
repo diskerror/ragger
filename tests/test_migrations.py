@@ -121,6 +121,10 @@ class TestMigrationBackfill:
             "INSERT INTO memories (text, embedding, metadata, timestamp) VALUES (?, ?, ?, ?)",
             ("plain memory", emb, json.dumps({"source": "chat"}), "2026-01-02T00:00:00")
         )
+        conn.execute(
+            "INSERT INTO memories (text, embedding, metadata, timestamp) VALUES (?, ?, ?, ?)",
+            ("kept memory", emb, json.dumps({"collection": "common", "keep": True, "bad": True, "source": "admin"}), "2026-01-03T00:00:00")
+        )
         conn.commit()
         conn.close()
         return db_path
@@ -146,5 +150,16 @@ class TestMigrationBackfill:
         assert row2[0] == "memory"
         assert row2[1] == ""
         assert row2[2] == ""
+
+        # Memory with keep/bad boolean flags converted to tags
+        row3 = conn.execute("SELECT collection, tags, metadata FROM memories WHERE id = 3").fetchone()
+        assert row3[0] == "common"
+        assert "keep" in row3[1].split(",")
+        assert "bad" in row3[1].split(",")
+        # keep/bad should be removed from JSON metadata
+        meta3 = json.loads(row3[2]) if row3[2] else {}
+        assert "keep" not in meta3
+        assert "bad" not in meta3
+        assert meta3["source"] == "admin"
 
         conn.close()

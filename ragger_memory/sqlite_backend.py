@@ -261,11 +261,21 @@ class SqliteBackend(MemoryBackend):
             category = metadata.pop("category", "")
             tags_val = metadata.pop("tags", "")
             if isinstance(tags_val, list):
-                tags_str = ",".join(str(t) for t in tags_val)
-            elif isinstance(tags_val, str):
-                tags_str = tags_val
+                tag_list = [str(t) for t in tags_val]
+            elif isinstance(tags_val, str) and tags_val:
+                tag_list = [t.strip() for t in tags_val.split(",") if t.strip()]
             else:
-                tags_str = ""
+                tag_list = []
+            
+            # Convert boolean flags to tags
+            if metadata.pop("keep", False):
+                if "keep" not in tag_list:
+                    tag_list.append("keep")
+            if metadata.pop("bad", False):
+                if "bad" not in tag_list:
+                    tag_list.append("bad")
+            
+            tags_str = ",".join(tag_list)
             
             metadata_json = json.dumps(metadata) if metadata else None
             timestamp_str = timestamp.isoformat()
@@ -610,9 +620,14 @@ class SqliteBackend(MemoryBackend):
             logger.error(f"BM25 index rebuild failed: {e}")
             raise
     
+    @staticmethod
+    def _has_tag(tags: str, tag: str) -> bool:
+        """Check if a comma-separated tags string contains a specific tag."""
+        return tag in (t.strip() for t in (tags or "").split(",") if t.strip())
+
     def delete(self, memory_id: str) -> bool:
         """
-        Delete a memory by ID. Respects "keep" tag in metadata.
+        Delete a memory by ID. Respects "keep" tag.
         
         Args:
             memory_id: Memory ID to delete
@@ -621,17 +636,15 @@ class SqliteBackend(MemoryBackend):
             True if deleted, False if not found or protected by "keep" tag
         """
         try:
-            # Check if memory has "keep" tag
             row = self.conn.execute(
-                f"SELECT metadata FROM {self._memories_table} WHERE id = ?",
+                f"SELECT tags FROM {self._memories_table} WHERE id = ?",
                 (int(memory_id),)
             ).fetchone()
             
             if not row:
                 return False  # Not found
             
-            metadata = json.loads(row[0]) if row[0] else {}
-            if metadata.get("keep"):
+            if self._has_tag(row[0], "keep"):
                 logger.info(f"Skipped deletion of memory {memory_id} (keep tag)")
                 return False
             
@@ -650,7 +663,7 @@ class SqliteBackend(MemoryBackend):
     
     def delete_batch(self, memory_ids: list) -> int:
         """
-        Delete multiple memories by ID. Respects "keep" tag in metadata.
+        Delete multiple memories by ID. Respects "keep" tag.
         
         Args:
             memory_ids: List of memory IDs to delete
@@ -661,10 +674,9 @@ class SqliteBackend(MemoryBackend):
         if not memory_ids:
             return 0
         try:
-            # Filter out memories with "keep" tag
             placeholders = ",".join("?" * len(memory_ids))
             rows = self.conn.execute(
-                f"SELECT id, metadata FROM {self._memories_table} WHERE id IN ({placeholders})",
+                f"SELECT id, tags FROM {self._memories_table} WHERE id IN ({placeholders})",
                 [int(mid) for mid in memory_ids]
             ).fetchall()
             
@@ -672,8 +684,7 @@ class SqliteBackend(MemoryBackend):
             kept = []
             for row in rows:
                 memory_id = row[0]
-                metadata = json.loads(row[1]) if row[1] else {}
-                if metadata.get("keep"):
+                if self._has_tag(row[1], "keep"):
                     kept.append(memory_id)
                 else:
                     deletable.append(memory_id)

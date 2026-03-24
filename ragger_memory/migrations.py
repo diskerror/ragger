@@ -62,11 +62,21 @@ def migrate_add_dedicated_columns(conn: sqlite3.Connection, table: str = "memori
         # Tags: extract from metadata, normalize to comma-separated string
         tags_val = meta.pop("tags", "")
         if isinstance(tags_val, list):
-            tags_str = ",".join(str(t) for t in tags_val)
-        elif isinstance(tags_val, str):
-            tags_str = tags_val
+            tag_list = [str(t) for t in tags_val]
+        elif isinstance(tags_val, str) and tags_val:
+            tag_list = [t.strip() for t in tags_val.split(",") if t.strip()]
         else:
-            tags_str = ""
+            tag_list = []
+        
+        # Convert boolean flags to tags
+        if meta.pop("keep", False):
+            if "keep" not in tag_list:
+                tag_list.append("keep")
+        if meta.pop("bad", False):
+            if "bad" not in tag_list:
+                tag_list.append("bad")
+        
+        tags_str = ",".join(tag_list)
         
         # Write back cleaned metadata (without collection/category/tags)
         cleaned_json = json.dumps(meta) if meta else None

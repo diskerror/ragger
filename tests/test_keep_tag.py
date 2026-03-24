@@ -125,7 +125,7 @@ def test_store_common_sets_keep_tag(temp_db):
     # Verify the keep tag was automatically added
     results = memory.search_by_metadata({"category": "shared"})
     assert len(results) == 1
-    assert results[0]["metadata"].get("keep") is True
+    assert "keep" in (results[0]["metadata"].get("tags") or [])
     
     # Try to delete it - should fail
     deleted = memory.delete(memory_id)
@@ -149,11 +149,11 @@ def test_keep_tag_with_existing_metadata(temp_db):
         "custom_field": "value"
     }, common=True)
     
-    # Verify all metadata is preserved and keep is added
+    # Verify all metadata is preserved and keep is added as tag
     results = memory.search_by_metadata({"category": "test"})
     assert len(results) == 1
     metadata = results[0]["metadata"]
-    assert metadata.get("keep") is True
+    assert "keep" in (metadata.get("tags") or [])
     assert metadata.get("category") == "test"
     assert metadata.get("source") == "test-suite"
     assert metadata.get("custom_field") == "value"
