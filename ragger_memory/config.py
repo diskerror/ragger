@@ -523,6 +523,10 @@ def load_layered_config(system_path: str | None, user_path: str | None) -> dict:
     _clamp_to_ceiling(cfg, "chat_pause_minutes", "chat_max_turn_retention_minutes")
     _clamp_to_ceiling(cfg, "chat_max_turns_stored", "chat_max_turns_stored")  # already locked, but belt-and-suspenders
 
+    # single_user mode: force logs to user directory
+    if cfg.get("single_user", True):
+        cfg["log_dir"] = "~/.ragger"
+
     return cfg
 
 
