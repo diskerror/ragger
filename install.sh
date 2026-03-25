@@ -1,0 +1,80 @@
+#!/bin/bash
+# install.sh — Install Python Ragger to this machine
+#
+# Usage: ./install.sh
+#
+# Copies the project to /Users/Shared/Ragger (macOS) or
+# /opt/ragger (Linux), creates a venv, and installs the
+# wrapper script to /usr/local/bin/ragger.
+
+set -euo pipefail
+
+SRC="$(cd "$(dirname "$0")" && pwd)"
+OS="$(uname -s)"
+
+case "$OS" in
+    Darwin) DEST="/Users/Shared/Ragger" ;;
+    Linux)  DEST="/opt/ragger" ;;
+    *)      echo "[!] Unsupported OS: $OS" >&2; exit 1 ;;
+esac
+
+echo "[+] Installing from $SRC to $DEST"
+mkdir -p "$DEST"
+
+rsync -a --delete \
+    --exclude='.git' \
+    --exclude='__pycache__' \
+    --exclude='*.pyc' \
+    --exclude='.pytest_cache' \
+    --exclude='*.egg-info' \
+    --exclude='build' \
+    --exclude='dist' \
+    --exclude='.idea' \
+    --exclude='.venv' \
+    --exclude='.DS_Store' \
+    --exclude='.gitignore' \
+    --exclude='memories.db' \
+    "$SRC/" "$DEST/"
+
+# Ensure venv exists
+if [ ! -d "$DEST/.venv" ]; then
+    echo "[+] Creating venv..."
+    python3 -m venv "$DEST/.venv"
+fi
+
+# Install/update dependencies
+if [ -f "$DEST/requirements.txt" ]; then
+    echo "[+] Installing dependencies..."
+    "$DEST/.venv/bin/pip" install -q -r "$DEST/requirements.txt"
+fi
+
+# Install wrapper script
+WRAPPER="/usr/local/bin/ragger"
+echo "[+] Installing wrapper to $WRAPPER (requires sudo)"
+sudo tee "$WRAPPER" > /dev/null << SCRIPT
+#!/bin/bash
+export PYTHONPATH="$DEST"
+exec "$DEST/.venv/bin/python" -m ragger_memory.cli "\$@"
+SCRIPT
+sudo chmod 0755 "$WRAPPER"
+
+# Restart daemon if running
+if [ "$OS" = "Darwin" ]; then
+    PLIST="com.diskerror.ragger"
+    if sudo launchctl list "$PLIST" &>/dev/null; then
+        echo "[+] Restarting daemon..."
+        sudo launchctl kickstart -k "system/$PLIST"
+    else
+        echo "[*] Daemon not loaded — skipping restart"
+    fi
+elif [ "$OS" = "Linux" ]; then
+    if systemctl is-active --quiet ragger; then
+        echo "[+] Restarting daemon..."
+        sudo systemctl restart ragger
+    else
+        echo "[*] Service not active — skipping restart"
+    fi
+fi
+
+echo ""
+echo "✓ Installed: $WRAPPER → $DEST"
