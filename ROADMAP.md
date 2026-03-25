@@ -69,11 +69,24 @@ critical.
 - **Browser (future `ragger chat` web UI)**: Hashed password + session cookies.
   Separate auth concern from API tokens.
 - **Token rotation**: Configurable `token_rotation_minutes` (default 1440 = 24h,
-  0 = never). Daemon checks token age on each authenticated HTTP request; when
-  expired, generates new token, writes to `~user/.ragger/token`, updates hash
-  in users table. Client re-reads token on 401 and retries once. Prevents
-  tokens in old backups from being usable. Does not affect CLI access (no
-  tokens involved).
+  0 = never). On expired token: accept this one request normally, then generate
+  new token, write to `~user/.ragger/token`, update hash in users table. Client
+  picks up new token on next request (reads from file). Worst case if client
+  caches token in memory: one 401, re-read file, retry. Grace window (~60s)
+  prevents re-rotation before client picks up new token. Prevents tokens in
+  old backups from being usable. Does not affect CLI access (no tokens involved).
+
+### Remote Access
+- **TLS**: Crow (C++) supports HTTPS natively — cert/key paths in `[server]`
+  config. No reverse proxy needed for small deployments. Python version can
+  use a reverse proxy or switch to a WSGI server with TLS.
+- **Remote OpenClaw**: OpenClaw on user's machine, Ragger on central server.
+  Plugin's `serverUrl` points to remote HTTPS address. Token in local
+  `~/.ragger/token` (delivered during user setup).
+- **Web GUI** (future): Browser-based `ragger chat`. Same HTTP API, session
+  auth (password + cookie) for browser access. Bearer token for API clients.
+- **Config**: `[server] tls_cert`, `tls_key`, `tls_enabled = false` (default).
+  When enabled, serves HTTPS on the same port.
 
 ### Runtime Model
 - **Single process**, single port, single loaded embedding model
