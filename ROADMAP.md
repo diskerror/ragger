@@ -86,7 +86,9 @@ critical.
 - **Web GUI** (future): Browser-based `ragger chat`. Same HTTP API, session
   auth (password + cookie) for browser access. Bearer token for API clients.
 - **Config**: `[server] tls_cert`, `tls_key`, `tls_enabled = false` (default).
-  When enabled, serves HTTPS on the same port.
+  When enabled, serves HTTPS on the same port. If `tls_enabled = true` and
+  cert/key are missing or unreadable, ragger prints an error and exits — no
+  silent fallback to HTTP.
 
 ### Runtime Model
 - **Single process**, single port, single loaded embedding model
