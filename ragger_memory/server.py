@@ -395,7 +395,9 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     import sys
 
     # Check if port is available before loading model
+    # SO_REUSEADDR allows binding to TIME_WAIT sockets (normal after restart)
     test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    test_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         test_sock.bind((host, port))
     except OSError:
