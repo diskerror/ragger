@@ -21,7 +21,7 @@ from .config import (
 )
 
 __all__ = ['RaggerMemory']
-__version__ = '0.8.1a'
+__version__ = '0.8.1c'
 
 
 def build_version() -> str:
