@@ -41,6 +41,11 @@ case "$OS" in
         ;;
 esac
 
+# --- Paths (single source of truth) ---
+LOG_DIR="/var/log/ragger"
+DATA_DIR="/var/ragger"
+CONF_FILE="/etc/ragger.ini"
+
 # Check dependencies
 missing=()
 command -v python3 &>/dev/null || missing+=("python3")
@@ -98,30 +103,29 @@ else
 fi
 
 # --- Create directories and fix ownership ---
-for dir in /var/ragger /var/log/ragger; do
+for dir in "$DATA_DIR" "$LOG_DIR"; do
     if [ ! -d "$dir" ]; then
         info "Creating $dir"
         mkdir -p "$dir"
     fi
     chown -R "$RAGGER_USER:$RAGGER_GROUP" "$dir"
     chmod 0750 "$dir"
-    fi
 done
 
 # --- Install system config if missing ---
-if [ ! -f /etc/ragger.ini ]; then
-    info "Creating /etc/ragger.ini"
+if [ ! -f "$CONF_FILE" ]; then
+    info "Creating $CONF_FILE"
     if [ -f example-system.ini ]; then
-        cp example-system.ini /etc/ragger.ini
+        cp example-system.ini "$CONF_FILE"
     else
-        cat > /etc/ragger.ini << 'EOF'
+        cat > "$CONF_FILE" << EOF
 [server]
 host = 127.0.0.1
 port = 8432
 single_user = true
 
 [logging]
-log_dir = /var/log/ragger
+log_dir = $LOG_DIR
 
 [embedding]
 model = all-MiniLM-L6-v2
@@ -137,15 +141,14 @@ vector_weight = 0.7
 token_rotation_minutes = 1440
 EOF
     fi
-    chmod 0644 /etc/ragger.ini
+    chmod 0644 "$CONF_FILE"
 fi
 
-# --- Install LaunchDaemon (macOS) if missing ---
+# --- Install/update LaunchDaemon (macOS) ---
 if [ "$OS" = "Darwin" ]; then
     PLIST="/Library/LaunchDaemons/com.diskerror.ragger.plist"
-    if [ ! -f "$PLIST" ]; then
-        info "Installing LaunchDaemon"
-        cat > "$PLIST" << 'EOF'
+    info "Writing LaunchDaemon plist"
+    cat > "$PLIST" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -163,14 +166,13 @@ if [ "$OS" = "Darwin" ]; then
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/var/log/ragger/stdout.log</string>
+    <string>$LOG_DIR/stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>/var/log/ragger/stderr.log</string>
+    <string>$LOG_DIR/stderr.log</string>
 </dict>
 </plist>
 EOF
-        chmod 0644 "$PLIST"
-    fi
+    chmod 0644 "$PLIST"
 fi
 
 # --- Sync code to install location ---
