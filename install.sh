@@ -9,6 +9,25 @@
 
 set -euo pipefail
 
+RED='\033[0;31m'
+NC='\033[0m'
+
+missing=()
+command -v python3 &>/dev/null || missing+=("python3")
+command -v rsync &>/dev/null   || missing+=("rsync")
+
+if [ ${#missing[@]} -gt 0 ]; then
+    echo -e "${RED}[!] Missing required tools:${NC} ${missing[*]}"
+    exit 1
+fi
+
+# Check python3 has venv module (some distros strip it out)
+if ! python3 -c "import venv" 2>/dev/null; then
+    echo -e "${RED}[!] Python venv module not available.${NC}"
+    echo "    Linux (apt): sudo apt install python3-venv"
+    exit 1
+fi
+
 SRC="$(cd "$(dirname "$0")" && pwd)"
 OS="$(uname -s)"
 
