@@ -170,7 +170,11 @@ class RaggerHandler(BaseHTTPRequestHandler):
             self._respond(401, {"error": "unauthorized"})
             return
         if self.path == '/count':
-            self._respond(200, {"count": _memory.count()})
+            response = {"count": _memory.count()}
+            if _memory.is_multi_db:
+                response["user"] = _memory._user_backend.count()
+                response["common"] = _memory._backend.count()
+            self._respond(200, response)
         else:
             self._respond(404, {"error": f"unknown endpoint: {self.path}"})
     
