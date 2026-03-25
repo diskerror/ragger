@@ -61,11 +61,17 @@ critical.
 - **CLI (local or SSH)**: No authentication. Username from the shell session
   (`whoami`). Direct DB access via `~/.ragger/`. If you have a shell, you are
   that user. Root/sudo: no special handling — trusted to know the rules.
-- **HTTP (local or remote)**: Always requires bearer token. Token generated on
-  first run or by `ragger add-user`, stored in `~/.ragger/token` (0600).
-  Daemon maps token hash → username via `users` table in common DB. The user
-  never sees or manages their user_id. OpenClaw and other HTTP clients read
-  `~/.ragger/token` automatically.
+- **HTTP (local or remote)**: Always requires bearer token. Token stored in
+  `~/.ragger/token` (0600). Daemon maps token hash → username via `users`
+  table in common DB. The user never sees or manages their user_id. OpenClaw
+  and other HTTP clients read `~/.ragger/token` automatically.
+- **User provisioning**:
+  - `ragger add-self` — any shell user runs this. Creates `~/.ragger/`,
+    generates token, registers with daemon. No sudo needed.
+  - `ragger add-user <name>` — admin creates a specific user. Writes token
+    to `~<name>/.ragger/token`. Requires sudo.
+  - `ragger add-all` — admin scans home directories, adds every user that
+    doesn't already have a token. Bulk provisioning.
 - **Browser (future `ragger chat` web UI)**: Hashed password + session cookies.
   Separate auth concern from API tokens.
 - **Token rotation**: Configurable `token_rotation_minutes` (default 1440 = 24h,
