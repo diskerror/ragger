@@ -13,7 +13,7 @@ SRC="$(cd "$(dirname "$0")" && pwd)"
 OS="$(uname -s)"
 
 case "$OS" in
-    Darwin) DEST="/Users/Shared/Ragger" ;;
+    Darwin) DEST="/usr/local/lib/ragger" ;;
     Linux)  DEST="/opt/ragger" ;;
     *)      echo "[!] Unsupported OS: $OS" >&2; exit 1 ;;
 esac
