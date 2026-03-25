@@ -206,14 +206,20 @@ if [ -f "$DEST/requirements.txt" ]; then
     "$DEST/.venv/bin/pip" install -q --upgrade -r "$DEST/requirements.txt"
 fi
 
-# --- Install wrapper script ---
-info "Installing /usr/local/bin/ragger"
-cat > /usr/local/bin/ragger << EOF
+# --- Install wrapper scripts ---
+info "Installing /usr/local/bin/ragger-py"
+cat > /usr/local/bin/ragger-py << EOF
 #!/bin/bash
 export PYTHONPATH="$DEST"
 exec "$DEST/.venv/bin/python" -m ragger_memory.cli "\$@"
 EOF
-chmod 0755 /usr/local/bin/ragger
+chmod 0755 /usr/local/bin/ragger-py
+
+# ragger → ragger-py (unless C++ binary is preferred)
+if [ ! -f /usr/local/bin/ragger ] || head -1 /usr/local/bin/ragger | grep -q bash; then
+    info "Installing /usr/local/bin/ragger → ragger-py"
+    cp /usr/local/bin/ragger-py /usr/local/bin/ragger
+fi
 
 # --- Restart daemon ---
 if [ "$OS" = "Darwin" ]; then
