@@ -7,7 +7,7 @@ import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from .memory import RaggerMemory
-from .auth import load_token, validate_token, hash_token, ensure_token
+from .auth import load_token, validate_token, hash_token, ensure_token, token_path
 
 logger = logging.getLogger(__name__)
 # Dedicated HTTP log (request/response details)
@@ -196,12 +196,9 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     global _memory, _server_token
     
-    # Load auth token if available (None = auth disabled)
-    _server_token = load_token()
-    if _server_token:
-        print("Auth: bearer token required (loaded from ~/.ragger/token)")
-    else:
-        print("Auth: disabled (no token file found)")
+    # Ensure auth token exists (create if needed)
+    _server_token = ensure_token()
+    print(f"Auth: bearer token required (token: {token_path()})")
     
     from .config import get_config
     cfg = get_config()

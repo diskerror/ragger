@@ -52,11 +52,11 @@ class TestAuth:
 
         ensure_token()
         mode = os.stat(str(token_file)).st_mode
-        # Should be 0660 (owner+group read/write)
+        # Should be 0600 (owner only)
         assert mode & stat.S_IRUSR
         assert mode & stat.S_IWUSR
-        assert mode & stat.S_IRGRP
-        assert mode & stat.S_IWGRP
+        assert not (mode & stat.S_IRGRP)
+        assert not (mode & stat.S_IWGRP)
         assert not (mode & stat.S_IROTH)
         assert not (mode & stat.S_IWOTH)
 

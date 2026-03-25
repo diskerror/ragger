@@ -51,8 +51,8 @@ def ensure_token() -> str:
     with open(path, "w") as f:
         f.write(token + "\n")
 
-    # Set permissions: owner + group read/write (0660)
-    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP)
+    # Set permissions: owner only (0600)
+    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
 
     return token
 
