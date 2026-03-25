@@ -711,6 +711,11 @@ class SqliteBackend(MemoryBackend):
             Number of documents re-embedded
         """
         try:
+            # Get total count first
+            total = self.conn.execute(
+                f"SELECT COUNT(*) FROM {self._memories_table}"
+            ).fetchone()[0]
+            
             cursor = self.conn.execute(
                 f"SELECT id, text FROM {self._memories_table}"
             )
@@ -730,14 +735,16 @@ class SqliteBackend(MemoryBackend):
                 )
                 
                 count += 1
-                if count % 1000 == 0:
-                    logger.info(f"Embeddings rebuild: {count} docs...")
+                # Print in-place progress update
+                print(f"\rRebuilding embeddings: {count}/{total}", end="", flush=True)
             
+            print()  # Final newline
             self.conn.commit()
             logger.info(f"Embeddings rebuilt: {count} documents")
             return count
             
         except Exception as e:
+            print()  # Ensure newline on error
             logger.error(f"Embeddings rebuild failed: {e}")
             raise
     

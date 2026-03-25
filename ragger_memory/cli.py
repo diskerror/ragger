@@ -835,7 +835,9 @@ Examples:
     sub.add_parser("rebuild-bm25", help="Rebuild BM25 index from all documents")
 
     # --- rebuild-embeddings ---
-    sub.add_parser("rebuild-embeddings", help="Rebuild embeddings with current model")
+    p_rebuild = sub.add_parser("rebuild-embeddings", help="Rebuild embeddings with current model")
+    p_rebuild.add_argument("--yes", "-y", action="store_true",
+                           help="Skip confirmation prompt")
 
     # --- update-model ---
     sub.add_parser("update-model", help="Download/update embedding model")
@@ -856,13 +858,14 @@ Examples:
 
     if args.version or (hasattr(args, 'verb') and args.verb == "version"):
         from . import build_version
-        print(f"ragger {build_version()}")
+        print(build_version())
         return
 
     # No verb or 'help' → print help with version header
     if not args.verb or args.verb == "help":
         from . import build_version
-        print(f"ragger {build_version()}\n")
+        print(build_version())
+        print()
         parser.print_help()
         return
 
@@ -994,6 +997,30 @@ Examples:
         backend.close()
 
     elif args.verb == "rebuild-embeddings":
+        import shutil
+        from .config import expand_path, SQLITE_PATH
+        
+        # Count memories first
+        memory = RaggerMemory()
+        total_count = memory.count()
+        memory.close()
+        
+        # Warning prompt (unless --yes)
+        if not getattr(args, 'yes', False):
+            print(f"This will re-embed all {total_count} memories.")
+            print("The server should be stopped first.")
+            response = input("Continue? [y/N] ").strip().lower()
+            if response not in ('y', 'yes'):
+                print("Aborted.")
+                return
+        
+        # Backup database
+        db_path = Path(expand_path(SQLITE_PATH))
+        backup_path = db_path.with_suffix('.db.bak')
+        shutil.copy2(db_path, backup_path)
+        print(f"✓ Backed up to {backup_path}")
+        
+        # Rebuild
         memory = RaggerMemory()
         count = memory.rebuild_embeddings()
         print(f"✓ Embeddings rebuilt: {count} documents")
