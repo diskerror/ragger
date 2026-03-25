@@ -467,39 +467,12 @@ def run_chat():
         except Exception as e:
             logger.warning(f"Failed to expire old turns: {e}")
 
-    def _check_pause_summary():
-        """If idle long enough, summarize and store unsummarized turns."""
-        nonlocal unsummarized_turns, last_activity
-        if not summarize_on_pause or not unsummarized_turns:
-            return
-        idle_seconds = time.time() - last_activity
-        if idle_seconds < pause_minutes * 60:
+    def _bg_summarize(turns_to_summarize):
+        """Fork a background process to summarize turns and expire old ones."""
+        if not turns_to_summarize:
             return
 
-        summary = _summarize_conversation(inference, model, unsummarized_turns)
-        if summary:
-            try:
-                memory.store(summary, {
-                    "collection": "memory",
-                    "category": "conversation-summary",
-                    "source": "ragger-chat",
-                    "turns": len(unsummarized_turns),
-                })
-                logger.info(f"Stored pause summary ({len(unsummarized_turns)} turns)")
-            except Exception as e:
-                logger.warning(f"Failed to store pause summary: {e}")
-        unsummarized_turns = []
-        
-        # Expire old turns after summarization
-        _expire_old_turns()
-
-    def _quit_summary():
-        """Summarize full conversation on exit in a background process."""
-        if not summarize_on_quit or not unsummarized_turns:
-            return
-
-        # Capture what the child needs before forking
-        turns_copy = list(unsummarized_turns)
+        turns_copy = list(turns_to_summarize)
         st = store_turns
         max_ret = max_turn_retention_minutes
         max_st = max_turns_stored
@@ -507,18 +480,15 @@ def run_chat():
         pid = os.fork()
         if pid != 0:
             # Parent: return immediately
-            print("Summarizing in background...")
             return
 
-        # Child process: fresh connections, summarize, exit
+        # Child process: fresh connections (SQLite not fork-safe), summarize, exit
         try:
-            # Fresh memory connection (SQLite not fork-safe)
             if use_client:
                 child_memory = RaggerClient(cfg["host"], cfg["port"], load_token())
             else:
                 child_memory = RaggerMemory()
 
-            # Fresh inference client
             child_inference = InferenceClient.from_config(cfg)
 
             summary = _summarize_conversation(child_inference, model, turns_copy)
@@ -530,7 +500,7 @@ def run_chat():
                     "turns": len(turns_copy),
                 })
 
-            # Expire old turns (need the same closure variables)
+            # Expire old turns
             if st not in ("false", "session"):
                 try:
                     turns = child_memory.search_by_metadata({
@@ -558,13 +528,32 @@ def run_chat():
                         if expired_ids:
                             child_memory.delete_batch(expired_ids)
                 except Exception:
-                    pass  # Best effort in background
+                    pass
 
             child_memory.close()
         except Exception:
-            pass  # Silent failure in background child
+            pass
         finally:
             os._exit(0)
+
+    def _check_pause_summary():
+        """If idle long enough, summarize unsummarized turns in background."""
+        nonlocal unsummarized_turns, last_activity
+        if not summarize_on_pause or not unsummarized_turns:
+            return
+        idle_seconds = time.time() - last_activity
+        if idle_seconds < pause_minutes * 60:
+            return
+
+        _bg_summarize(unsummarized_turns)
+        unsummarized_turns = []
+
+    def _quit_summary():
+        """Summarize full conversation on exit in background."""
+        if not summarize_on_quit or not unsummarized_turns:
+            return
+        print("Summarizing in background...")
+        _bg_summarize(unsummarized_turns)
 
     # Launch-time orphan check: summarize and clean up any raw turns from crashed session
     def _check_orphaned_turns():
