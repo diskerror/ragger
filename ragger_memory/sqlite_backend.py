@@ -244,6 +244,14 @@ class SqliteBackend(MemoryBackend):
                     "is_admin": bool(row[2]), "token_hash": row[3]}
         return None
 
+    def update_user_token(self, username: str, token_hash: str):
+        """Update a user's token hash."""
+        self.conn.execute(
+            "UPDATE users SET token_hash = ? WHERE username = ?",
+            (token_hash, username)
+        )
+        self.conn.commit()
+
     def store_raw(
         self,
         text: str,

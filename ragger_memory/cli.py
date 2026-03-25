@@ -823,6 +823,13 @@ Examples:
     # --- mcp ---
     sub.add_parser("mcp", help="Run as MCP server (JSON-RPC over stdin/stdout)")
 
+    # --- user provisioning ---
+    sub.add_parser("add-self", help="Provision yourself: create ~/.ragger/ and token")
+    p_add_user = sub.add_parser("add-user", help="Provision a user (requires sudo)")
+    p_add_user.add_argument("username", type=str, help="Username to provision")
+    p_add_user.add_argument("--admin", action="store_true", help="Grant admin privileges")
+    sub.add_parser("add-all", help="Provision all users with home directories (requires sudo)")
+
     # --- rebuild-bm25 ---
     sub.add_parser("rebuild-bm25", help="Rebuild BM25 index from all documents")
 
@@ -876,6 +883,76 @@ Examples:
     elif args.verb == "update-model":
         RaggerMemory.download_model()
         print("✓ Model is up to date")
+
+    elif args.verb == "add-self":
+        import getpass
+        from .auth import provision_user, register_user_in_db
+        username = getpass.getuser()
+        token, created = provision_user(username)
+        if created:
+            print(f"✓ Created ~/.ragger/token for {username}")
+        else:
+            print(f"Token already exists for {username}")
+        try:
+            user_id = register_user_in_db(username, token, is_admin=True)
+            if user_id:
+                print(f"✓ Registered in database (user_id: {user_id})")
+            else:
+                print("Server will auto-register on first authenticated request.")
+        except Exception:
+            print("Server will auto-register on first authenticated request.")
+
+    elif args.verb == "add-user":
+        import os
+        from .auth import provision_user, register_user_in_db
+        username = args.username
+        is_admin = getattr(args, 'admin', False)
+        try:
+            token, created = provision_user(username)
+        except KeyError:
+            print(f"Error: user '{username}' not found in system")
+            return
+        except PermissionError:
+            print(f"Error: permission denied. Run with sudo to provision other users.")
+            return
+        if created:
+            print(f"✓ Created token for {username}")
+        else:
+            print(f"Token already exists for {username}")
+        try:
+            user_id = register_user_in_db(username, token, is_admin=is_admin)
+            print(f"✓ Registered in database (user_id: {user_id})")
+        except Exception as e:
+            print(f"Note: Could not register in DB ({e})")
+
+    elif args.verb == "add-all":
+        import os
+        import pwd
+        from .auth import provision_user, register_user_in_db
+        if os.getuid() != 0:
+            print("Error: add-all requires sudo")
+            return
+        # Scan home directories
+        count = 0
+        for pw in pwd.getpwall():
+            # Skip system users (uid < 500 on macOS, < 1000 on Linux)
+            if pw.pw_uid < 500:
+                continue
+            # Skip users without real home directories
+            if not os.path.isdir(pw.pw_dir):
+                continue
+            # Skip nobody and other special accounts
+            if pw.pw_name in ('nobody', 'nfsnobody'):
+                continue
+            try:
+                token, created = provision_user(pw.pw_name, home_dir=pw.pw_dir)
+                status = "created" if created else "exists"
+                register_user_in_db(pw.pw_name, token)
+                print(f"  {pw.pw_name}: {status}")
+                count += 1
+            except Exception as e:
+                print(f"  {pw.pw_name}: error ({e})")
+        print(f"✓ Processed {count} users")
 
     elif args.verb == "rebuild-bm25":
         from .embedding import Embedder

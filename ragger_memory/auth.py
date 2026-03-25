@@ -71,3 +71,91 @@ def load_token() -> str | None:
 def validate_token(provided: str, expected: str) -> bool:
     """Constant-time token comparison"""
     return secrets.compare_digest(provided, expected)
+
+
+def token_path_for_user(username: str) -> str:
+    """Token file path for a given username, using their home directory."""
+    import pwd
+    pw = pwd.getpwnam(username)
+    return os.path.join(pw.pw_dir, ".ragger", "token")
+
+
+def provision_user(username: str, home_dir: str | None = None) -> tuple[str, bool]:
+    """
+    Provision a user: create ~/.ragger/, generate token, set permissions.
+
+    Args:
+        username: System username
+        home_dir: Override home directory (default: look up from passwd)
+
+    Returns:
+        (token, created) — token string and whether it was newly created.
+        If user already had a token, returns (existing_token, False).
+    """
+    if home_dir is None:
+        import pwd
+        pw = pwd.getpwnam(username)
+        home_dir = pw.pw_dir
+
+    ragger_dir = os.path.join(home_dir, ".ragger")
+    path = os.path.join(ragger_dir, "token")
+
+    # Check existing
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            token = f.read().strip()
+            if token:
+                return token, False
+
+    # Create directory and token
+    os.makedirs(ragger_dir, exist_ok=True)
+    token = generate_token()
+    with open(path, "w") as f:
+        f.write(token + "\n")
+
+    # Permissions: 0640 (owner rw + group read for daemon)
+    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP)
+
+    # Set ownership to the target user if we're running as root
+    if os.getuid() == 0:
+        import pwd
+        try:
+            pw = pwd.getpwnam(username)
+            os.chown(ragger_dir, pw.pw_uid, pw.pw_gid)
+            os.chown(path, pw.pw_uid, pw.pw_gid)
+        except KeyError:
+            pass  # user doesn't exist in passwd — skip chown
+
+    return token, True
+
+
+def register_user_in_db(username: str, token: str, is_admin: bool = False):
+    """
+    Register a user in the common DB by calling the daemon's store endpoint,
+    or directly if the daemon isn't available.
+    """
+    from .sqlite_backend import SqliteBackend
+    from .embedding import Embedder
+    from .config import get_config
+
+    cfg = get_config()
+    db_path = cfg["common_db_path"] if not cfg["single_user"] else cfg["db_path"]
+
+    # Direct DB access — CLI doesn't use HTTP auth
+    embedder = Embedder()
+    backend = SqliteBackend(embedder, db_path=db_path)
+
+    hashed = hash_token(token)
+
+    # Check if user already exists
+    existing = backend.get_user_by_username(username)
+    if existing:
+        # Update token hash if changed
+        if existing["token_hash"] != hashed:
+            backend.update_user_token(username, hashed)
+        backend.close()
+        return existing["id"]
+
+    user_id = backend.create_user(username, hashed, is_admin=is_admin)
+    backend.close()
+    return user_id
