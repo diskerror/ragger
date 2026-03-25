@@ -76,6 +76,8 @@ Features: multi-user with per-user databases and search merging, common shared m
 - ~1GB disk for model + dependencies
 - SQLite backend: No extra dependencies (uses Python stdlib)
 
+**Platforms:** macOS and Linux are tested and supported. Windows should work (all dependencies have Windows wheels) but needs a PowerShell install script and Windows service integration. Contributions welcome.
+
 ## How It Works
 
 1. **Store:** Text → 384-dim vector via sentence-transformers → backend document with text, embedding, metadata, and timestamp.
