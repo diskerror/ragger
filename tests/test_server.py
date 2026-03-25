@@ -28,6 +28,7 @@ def mock_memory():
     """Create a mock RaggerMemory instance."""
     mem = MagicMock()
     mem.count.return_value = 42
+    mem.is_multi_db = False
     mem.store.return_value = "123"
     mem.search.return_value = {
         "results": [

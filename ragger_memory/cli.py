@@ -494,28 +494,77 @@ def run_chat():
         _expire_old_turns()
 
     def _quit_summary():
-        """Summarize full conversation on exit."""
+        """Summarize full conversation on exit in a background process."""
         if not summarize_on_quit or not unsummarized_turns:
             return
 
-        print("Summarizing conversation...", end="", flush=True)
-        summary = _summarize_conversation(inference, model, unsummarized_turns)
-        if summary:
-            try:
-                memory.store(summary, {
+        # Capture what the child needs before forking
+        turns_copy = list(unsummarized_turns)
+        st = store_turns
+        max_ret = max_turn_retention_minutes
+        max_st = max_turns_stored
+
+        pid = os.fork()
+        if pid != 0:
+            # Parent: return immediately
+            print("Summarizing in background...")
+            return
+
+        # Child process: fresh connections, summarize, exit
+        try:
+            # Fresh memory connection (SQLite not fork-safe)
+            if use_client:
+                child_memory = RaggerClient(cfg["host"], cfg["port"], load_token())
+            else:
+                child_memory = RaggerMemory()
+
+            # Fresh inference client
+            child_inference = InferenceClient.from_config(cfg)
+
+            summary = _summarize_conversation(child_inference, model, turns_copy)
+            if summary:
+                child_memory.store(summary, {
                     "collection": "memory",
                     "category": "conversation-summary",
                     "source": "ragger-chat",
-                    "turns": len(unsummarized_turns),
+                    "turns": len(turns_copy),
                 })
-                print(" stored.")
-            except Exception as e:
-                print(f" failed: {e}")
-        else:
-            print(" skipped (empty).")
-        
-        # Expire old turns after summarization
-        _expire_old_turns()
+
+            # Expire old turns (need the same closure variables)
+            if st not in ("false", "session"):
+                try:
+                    turns = child_memory.search_by_metadata({
+                        "category": "conversation",
+                        "source": "ragger-chat"
+                    })
+                    turns = [t for t in turns if t.get("metadata", {}).get("mode") != "session"]
+                    if turns:
+                        now = datetime.now(timezone.utc)
+                        cutoff = now - timedelta(minutes=max_ret)
+                        expired_ids = []
+                        for t in turns:
+                            ts_str = t.get("timestamp", "")
+                            if ts_str:
+                                ts = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+                                if ts < cutoff:
+                                    expired_ids.append(t["id"])
+                        if len(turns) > max_st:
+                            sorted_t = sorted(turns, key=lambda x: x.get("timestamp", ""))
+                            excess = len(turns) - max_st
+                            existing = set(expired_ids)
+                            for t in sorted_t[:excess]:
+                                if t["id"] not in existing:
+                                    expired_ids.append(t["id"])
+                        if expired_ids:
+                            child_memory.delete_batch(expired_ids)
+                except Exception:
+                    pass  # Best effort in background
+
+            child_memory.close()
+        except Exception:
+            pass  # Silent failure in background child
+        finally:
+            os._exit(0)
 
     # Launch-time orphan check: summarize and clean up any raw turns from crashed session
     def _check_orphaned_turns():
