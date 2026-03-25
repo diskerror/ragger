@@ -66,9 +66,9 @@ First run downloads the embedding model (~90MB) to your HuggingFace cache. After
 
 ## Status
 
-**Version 0.7.0** — Single-user, fully functional.
+**Version 0.8.0** — Multi-user with token auth, token rotation, and per-user model selection.
 
-Multi-user framework is in place (layered config with system/user INI files, SERVER_LOCKED keys, system ceilings on user settings, token auth, persona file hierarchy) but the data layer is still single-user: one database, one user, no user routing. Multi-user data support (users table, per-user DBs, search merging) is planned for a future release.
+Features: multi-user with per-user databases and search merging, common shared memory DB, bearer token authentication (enabled by default), automatic token rotation, per-user inference model selection, rebuild-embeddings verb, schema-driven API formats, chat persistence with background summarization, and user provisioning CLI.
 
 ## Requirements
 
