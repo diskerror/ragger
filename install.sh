@@ -36,16 +36,16 @@ rsync -a --delete \
     --exclude='memories.db' \
     "$SRC/" "$DEST/"
 
-# Ensure venv exists
+# Create venv if missing
 if [ ! -d "$DEST/.venv" ]; then
     echo "[+] Creating venv..."
     python3 -m venv "$DEST/.venv"
 fi
 
-# Install/update dependencies
+# Always install/update dependencies
 if [ -f "$DEST/requirements.txt" ]; then
-    echo "[+] Installing dependencies..."
-    "$DEST/.venv/bin/pip" install -q -r "$DEST/requirements.txt"
+    echo "[+] Installing/updating dependencies..."
+    "$DEST/.venv/bin/pip" install -q --upgrade -r "$DEST/requirements.txt"
 fi
 
 # Install wrapper script
