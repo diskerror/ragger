@@ -51,8 +51,9 @@ def ensure_token() -> str:
     with open(path, "w") as f:
         f.write(token + "\n")
 
-    # Set permissions: owner only (0600)
-    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+    # Set permissions: owner read/write + group read (0640)
+    # Group read allows the daemon (_ragger) to read user tokens
+    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP)
 
     return token
 
