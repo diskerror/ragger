@@ -699,6 +699,48 @@ class SqliteBackend(MemoryBackend):
             logger.error(f"BM25 index rebuild failed: {e}")
             raise
     
+    def rebuild_embeddings(self, embedder):
+        """
+        Rebuild embeddings for all documents with the current embedding model.
+        Use after switching models or to update embeddings.
+        
+        Args:
+            embedder: Embedder instance to use for re-embedding
+        
+        Returns:
+            Number of documents re-embedded
+        """
+        try:
+            cursor = self.conn.execute(
+                f"SELECT id, text FROM {self._memories_table}"
+            )
+            
+            count = 0
+            for row in cursor:
+                memory_id, text = row[0], row[1]
+                
+                # Generate new embedding
+                embedding = embedder.encode(text)
+                embedding_blob = np.array(embedding, dtype=np.float32).tobytes()
+                
+                # Update embedding in database
+                self.conn.execute(
+                    f"UPDATE {self._memories_table} SET embedding = ? WHERE id = ?",
+                    (embedding_blob, memory_id)
+                )
+                
+                count += 1
+                if count % 1000 == 0:
+                    logger.info(f"Embeddings rebuild: {count} docs...")
+            
+            self.conn.commit()
+            logger.info(f"Embeddings rebuilt: {count} documents")
+            return count
+            
+        except Exception as e:
+            logger.error(f"Embeddings rebuild failed: {e}")
+            raise
+    
     @staticmethod
     def _has_tag(tags: str, tag: str) -> bool:
         """Check if a comma-separated tags string contains a specific tag."""

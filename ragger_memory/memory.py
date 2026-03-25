@@ -199,6 +199,23 @@ class RaggerMemory:
                 results = results[:limit]
         return results
     
+    def rebuild_embeddings(self):
+        """
+        Rebuild embeddings for all documents with the current embedding model.
+        In multi-DB mode, rebuilds both common and user databases.
+        
+        Returns:
+            Number of documents re-embedded
+        """
+        from .embedding import Embedder
+        embedder = Embedder()
+        
+        count = self._backend.rebuild_embeddings(embedder)
+        if self._user_backend:
+            count += self._user_backend.rebuild_embeddings(embedder)
+        
+        return count
+    
     def close(self):
         """Close backend connection(s)"""
         self._backend.close()

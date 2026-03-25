@@ -342,3 +342,68 @@ class TestBM25IndexPersistence:
         assert "alpha" in tf
         assert "beta" in tf
         assert "gamma" in tf
+
+
+class TestRebuildEmbeddings:
+    """Tests for rebuild_embeddings functionality."""
+    
+    def test_rebuild_embeddings_updates_all(self, sqlite_backend, mock_embedder):
+        """rebuild_embeddings should update all embeddings with current model."""
+        # Store two memories
+        mid1 = sqlite_backend.store("first memory", {"collection": "memory"})
+        mid2 = sqlite_backend.store("second memory", {"collection": "memory"})
+        
+        # Get original embeddings
+        emb1_before = sqlite_backend.conn.execute(
+            "SELECT embedding FROM memories WHERE id = ?", (int(mid1),)
+        ).fetchone()[0]
+        emb2_before = sqlite_backend.conn.execute(
+            "SELECT embedding FROM memories WHERE id = ?", (int(mid2),)
+        ).fetchone()[0]
+        
+        # Change mock embedder behavior to produce different embeddings
+        # (in real use, this would be switching to a different model)
+        original_encode = mock_embedder.encode
+        
+        def new_encode(text):
+            # Return different embeddings (scaled by 2)
+            orig = original_encode(text)
+            return [x * 2.0 for x in orig]
+        
+        mock_embedder.encode = new_encode
+        
+        # Rebuild embeddings
+        count = sqlite_backend.rebuild_embeddings(mock_embedder)
+        assert count == 2
+        
+        # Get new embeddings
+        emb1_after = sqlite_backend.conn.execute(
+            "SELECT embedding FROM memories WHERE id = ?", (int(mid1),)
+        ).fetchone()[0]
+        emb2_after = sqlite_backend.conn.execute(
+            "SELECT embedding FROM memories WHERE id = ?", (int(mid2),)
+        ).fetchone()[0]
+        
+        # Embeddings should be different
+        assert emb1_before != emb1_after
+        assert emb2_before != emb2_after
+        
+        # Verify they're actually scaled
+        arr1_before = np.frombuffer(emb1_before, dtype=np.float32)
+        arr1_after = np.frombuffer(emb1_after, dtype=np.float32)
+        # Should be approximately 2x (allowing for floating point precision)
+        np.testing.assert_array_almost_equal(arr1_after, arr1_before * 2.0, decimal=5)
+    
+    def test_rebuild_embeddings_count(self, sqlite_backend, mock_embedder):
+        """rebuild_embeddings should return correct document count."""
+        # Store multiple memories
+        for i in range(5):
+            sqlite_backend.store(f"memory {i}", {"collection": "memory"})
+        
+        count = sqlite_backend.rebuild_embeddings(mock_embedder)
+        assert count == 5
+    
+    def test_rebuild_embeddings_empty_db(self, sqlite_backend, mock_embedder):
+        """rebuild_embeddings on empty database should return 0."""
+        count = sqlite_backend.rebuild_embeddings(mock_embedder)
+        assert count == 0

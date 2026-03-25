@@ -746,6 +746,7 @@ Verbs:
   export            Export memories to files
   mcp               Run as MCP server (stdin/stdout)
   rebuild-bm25      Rebuild BM25 index
+  rebuild-embeddings Rebuild embeddings with current model
   update-model      Download/update embedding model
   help              Show this help
 
@@ -832,6 +833,9 @@ Examples:
 
     # --- rebuild-bm25 ---
     sub.add_parser("rebuild-bm25", help="Rebuild BM25 index from all documents")
+
+    # --- rebuild-embeddings ---
+    sub.add_parser("rebuild-embeddings", help="Rebuild embeddings with current model")
 
     # --- update-model ---
     sub.add_parser("update-model", help="Download/update embedding model")
@@ -988,6 +992,12 @@ Examples:
         count = backend.rebuild_bm25_index()
         print(f"✓ BM25 index rebuilt: {count} documents")
         backend.close()
+
+    elif args.verb == "rebuild-embeddings":
+        memory = RaggerMemory()
+        count = memory.rebuild_embeddings()
+        print(f"✓ Embeddings rebuilt: {count} documents")
+        memory.close()
 
     elif args.verb == "export":
         if args.mode == "docs":
