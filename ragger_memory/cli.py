@@ -942,17 +942,25 @@ Examples:
             print("Error: add-all requires sudo")
             return
         from .client import RaggerClient
-        # Scan home directories
+        # Non-login shells — service accounts use these
+        nologin_shells = {
+            '/usr/bin/false', '/bin/false',
+            '/sbin/nologin', '/usr/sbin/nologin',
+        }
         count = 0
         for pw in pwd.getpwall():
-            # Skip system users (uid < 500 on macOS, < 1000 on Linux)
-            if pw.pw_uid < 500:
+            # Skip users with non-login shells (service accounts)
+            if pw.pw_shell in nologin_shells:
                 continue
             # Skip users without real home directories
             if not os.path.isdir(pw.pw_dir):
                 continue
-            # Skip nobody and other special accounts
-            if pw.pw_name in ('nobody', 'nfsnobody'):
+            # Skip root and nobody
+            if pw.pw_name in ('root', 'nobody', 'nfsnobody'):
+                continue
+            # Skip users whose home is a system directory
+            if pw.pw_dir in ('/', '/var', '/var/empty', '/dev/null',
+                             '/nonexistent'):
                 continue
             try:
                 token, created = provision_user(pw.pw_name, home_dir=pw.pw_dir)
