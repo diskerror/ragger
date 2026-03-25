@@ -886,25 +886,28 @@ Examples:
 
     elif args.verb == "add-self":
         import getpass
-        from .auth import provision_user, register_user_in_db
+        from .auth import provision_user
         username = getpass.getuser()
         token, created = provision_user(username)
         if created:
             print(f"✓ Created ~/.ragger/token for {username}")
         else:
             print(f"Token already exists for {username}")
+        # Register via daemon HTTP API (daemon owns the common DB)
         try:
-            user_id = register_user_in_db(username, token, is_admin=True)
-            if user_id:
-                print(f"✓ Registered in database (user_id: {user_id})")
+            from .client import RaggerClient
+            client = RaggerClient(cfg["host"], cfg["port"], token)
+            if client.is_available():
+                result = client.register_user(username)
+                print(f"✓ Registered in database (user_id: {result.get('user_id')})")
             else:
-                print("Server will auto-register on first authenticated request.")
+                print("Server not running. Will auto-register on first authenticated request.")
         except Exception:
             print("Server will auto-register on first authenticated request.")
 
     elif args.verb == "add-user":
         import os
-        from .auth import provision_user, register_user_in_db
+        from .auth import provision_user
         username = args.username
         is_admin = getattr(args, 'admin', False)
         try:
@@ -919,19 +922,26 @@ Examples:
             print(f"✓ Created token for {username}")
         else:
             print(f"Token already exists for {username}")
+        # Register via daemon
         try:
-            user_id = register_user_in_db(username, token, is_admin=is_admin)
-            print(f"✓ Registered in database (user_id: {user_id})")
-        except Exception as e:
-            print(f"Note: Could not register in DB ({e})")
+            from .client import RaggerClient
+            client = RaggerClient(cfg["host"], cfg["port"], token)
+            if client.is_available():
+                result = client.register_user(username, is_admin=is_admin)
+                print(f"✓ Registered in database (user_id: {result.get('user_id')})")
+            else:
+                print("Server not running. Will auto-register on first authenticated request.")
+        except Exception:
+            print("Server will auto-register on first authenticated request.")
 
     elif args.verb == "add-all":
         import os
         import pwd
-        from .auth import provision_user, register_user_in_db
+        from .auth import provision_user
         if os.getuid() != 0:
             print("Error: add-all requires sudo")
             return
+        from .client import RaggerClient
         # Scan home directories
         count = 0
         for pw in pwd.getpwall():
@@ -947,7 +957,15 @@ Examples:
             try:
                 token, created = provision_user(pw.pw_name, home_dir=pw.pw_dir)
                 status = "created" if created else "exists"
-                register_user_in_db(pw.pw_name, token)
+                try:
+                    client = RaggerClient(cfg["host"], cfg["port"], token)
+                    if client.is_available():
+                        client.register_user(pw.pw_name)
+                        status += ", registered"
+                    else:
+                        status += ", pending registration"
+                except Exception:
+                    status += ", pending registration"
                 print(f"  {pw.pw_name}: {status}")
                 count += 1
             except Exception as e:

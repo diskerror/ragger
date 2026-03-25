@@ -102,6 +102,21 @@ class RaggerClient:
         result = self._post("/search_by_metadata", data)
         return result.get("results", [])
 
+    def register_user(self, username: str, is_admin: bool = False) -> dict:
+        """Register a user via POST /register."""
+        payload = {"username": username}
+        if is_admin:
+            payload["is_admin"] = True
+        return self._post("/register", payload)
+
+    def is_available(self) -> bool:
+        """Check if daemon is responding."""
+        try:
+            self.health()
+            return True
+        except Exception:
+            return False
+
     def close(self):
         """No-op — HTTP is stateless"""
         pass

@@ -4,6 +4,7 @@ HTTP server for Ragger Memory
 
 import json
 import logging
+import os
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from .memory import RaggerMemory
@@ -125,6 +126,48 @@ class RaggerHandler(BaseHTTPRequestHandler):
                 count = _memory.delete_batch(memory_ids)
                 self._respond(200, {"deleted": count})
             
+            elif self.path == '/register':
+                username = params.get('username')
+                if not username:
+                    self._respond(400, {"error": "username required"})
+                    return
+                # Extract the bearer token from the request
+                auth_header = self.headers.get("Authorization", "")
+                if not auth_header.startswith("Bearer "):
+                    self._respond(401, {"error": "bearer token required"})
+                    return
+                provided_token = auth_header[7:]
+                # Verify: read the user's token file from the filesystem
+                import pwd
+                try:
+                    pw = pwd.getpwnam(username)
+                except KeyError:
+                    self._respond(400, {"error": f"unknown system user: {username}"})
+                    return
+                user_token_file = os.path.join(pw.pw_dir, ".ragger", "token")
+                if not os.path.exists(user_token_file):
+                    self._respond(400, {"error": f"no token file for {username}"})
+                    return
+                with open(user_token_file) as f:
+                    file_token = f.read().strip()
+                if not validate_token(provided_token, file_token):
+                    self._respond(403, {"error": "token does not match user's token file"})
+                    return
+                # Register user in DB
+                hashed = hash_token(provided_token)
+                backend = _memory._backend
+                existing = backend.get_user_by_username(username)
+                if existing:
+                    if existing.get("token_hash") != hashed:
+                        backend.update_user_token(username, hashed)
+                    self._respond(200, {"status": "exists", "user_id": existing["id"],
+                                        "username": username})
+                else:
+                    is_admin = params.get('is_admin', False)
+                    user_id = backend.create_user(username, hashed, is_admin=is_admin)
+                    self._respond(200, {"status": "created", "user_id": user_id,
+                                        "username": username})
+
             elif self.path == '/search_by_metadata':
                 metadata_filter = params.get('metadata', {})
                 if not metadata_filter:
@@ -238,6 +281,7 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     print(f"  POST   /delete_batch        - {{\"ids\": [\"1\", \"2\"]}}")
     print(f"  DELETE /memory/<id>         - delete by ID")
     print(f"  GET    /count               - memory count")
+    print(f"  POST   /register            - {{\"username\": \"...\"}}")
     print(f"  GET    /health              - health check")
     print(lang.MSG_SERVER_STOP)
     
