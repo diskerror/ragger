@@ -66,9 +66,9 @@ First run downloads the embedding model (~90MB) to your HuggingFace cache. After
 
 ## Status
 
-**Version 0.8.0** — Multi-user with token auth, token rotation, and per-user model selection.
+**Version 0.8.1** — Production-ready with unified install, rebuild-embeddings backup/warning, and comprehensive testing.
 
-Features: multi-user with per-user databases and search merging, common shared memory DB, bearer token authentication (enabled by default), automatic token rotation, per-user inference model selection, rebuild-embeddings verb, schema-driven API formats, chat persistence with background summarization, and user provisioning CLI.
+Features: multi-user with per-user databases and search merging, common shared memory DB, bearer token authentication (enabled by default), automatic token rotation, per-user inference model selection, rebuild-embeddings verb with backup and confirmation, schema-driven API formats, chat persistence with background summarization, user provisioning CLI, and idempotent install script.
 
 ## Requirements
 
