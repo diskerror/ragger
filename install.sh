@@ -3,15 +3,45 @@
 #
 # Usage: sudo ./install.sh
 #
-# Copies the project to /usr/local/lib/ragger (macOS) or
-# /opt/ragger (Linux), creates a venv, and installs the
-# wrapper script to /usr/local/bin/ragger.
+# Idempotent install: creates system user/group/directories if needed,
+# syncs code to install location, creates venv, installs wrapper.
 
 set -euo pipefail
 
+if [ "$(id -u)" -ne 0 ]; then
+    echo "[!] This script must be run as root: sudo ./install.sh" >&2
+    exit 1
+fi
+
 RED='\033[0;31m'
+GREEN='\033[0;32m'
 NC='\033[0m'
 
+info() { echo -e "${GREEN}[+]${NC} $*"; }
+
+cd "$(dirname "$0")"
+SRC="$(pwd)"
+
+# Detect OS
+OS="$(uname -s)"
+case "$OS" in
+    Darwin) 
+        DEST="/usr/local/lib/ragger"
+        RAGGER_USER="_ragger"
+        RAGGER_GROUP="ragger"
+        ;;
+    Linux)
+        DEST="/opt/ragger"
+        RAGGER_USER="ragger"
+        RAGGER_GROUP="ragger"
+        ;;
+    *)
+        echo "[!] Unsupported OS: $OS" >&2
+        exit 1
+        ;;
+esac
+
+# Check dependencies
 missing=()
 command -v python3 &>/dev/null || missing+=("python3")
 command -v rsync &>/dev/null   || missing+=("rsync")
@@ -21,29 +51,129 @@ if [ ${#missing[@]} -gt 0 ]; then
     exit 1
 fi
 
-# Check python3 has venv module (some distros strip it out)
 if ! python3 -c "import venv" 2>/dev/null; then
     echo -e "${RED}[!] Python venv module not available.${NC}"
     echo "    Linux (apt): sudo apt install python3-venv"
     exit 1
 fi
 
-# Must run as root
-if [ "$(id -u)" -ne 0 ]; then
-    echo -e "${RED}[!] This script must be run as root:${NC} sudo ./install.sh" >&2
-    exit 1
+# --- Create group if missing ---
+if [ "$OS" = "Darwin" ]; then
+    if ! dscl . -read /Groups/$RAGGER_GROUP &>/dev/null; then
+        info "Creating group: $RAGGER_GROUP"
+        LAST_GID=$(dscl . -list /Groups PrimaryGroupID | awk '{print $2}' | sort -n | tail -1)
+        NEXT_GID=$((LAST_GID + 1))
+        if [ "$NEXT_GID" -lt 400 ]; then NEXT_GID=400; fi
+        dscl . -create /Groups/$RAGGER_GROUP
+        dscl . -create /Groups/$RAGGER_GROUP PrimaryGroupID "$NEXT_GID"
+    fi
+else
+    if ! getent group $RAGGER_GROUP &>/dev/null; then
+        info "Creating group: $RAGGER_GROUP"
+        groupadd --system $RAGGER_GROUP
+    fi
 fi
 
-SRC="$(cd "$(dirname "$0")" && pwd)"
-OS="$(uname -s)"
+# --- Create user if missing ---
+if [ "$OS" = "Darwin" ]; then
+    if ! dscl . -read /Users/$RAGGER_USER &>/dev/null; then
+        info "Creating user: $RAGGER_USER"
+        LAST_UID=$(dscl . -list /Users UniqueID | awk '{print $2}' | sort -n | tail -1)
+        NEXT_UID=$((LAST_UID + 1))
+        if [ "$NEXT_UID" -lt 400 ]; then NEXT_UID=400; fi
+        GID=$(dscl . -read /Groups/$RAGGER_GROUP PrimaryGroupID | awk '{print $2}')
+        dscl . -create /Users/$RAGGER_USER
+        dscl . -create /Users/$RAGGER_USER UniqueID "$NEXT_UID"
+        dscl . -create /Users/$RAGGER_USER PrimaryGroupID "$GID"
+        dscl . -create /Users/$RAGGER_USER UserShell /usr/bin/false
+        dscl . -create /Users/$RAGGER_USER NFSHomeDirectory /var/empty
+        dscl . -create /Users/$RAGGER_USER IsHidden 1
+    fi
+else
+    if ! id $RAGGER_USER &>/dev/null; then
+        info "Creating user: $RAGGER_USER"
+        useradd --system --no-create-home --shell /usr/bin/false \
+                --gid $RAGGER_GROUP --home-dir /var/empty $RAGGER_USER
+    fi
+fi
 
-case "$OS" in
-    Darwin) DEST="/usr/local/lib/ragger" ;;
-    Linux)  DEST="/opt/ragger" ;;
-    *)      echo "[!] Unsupported OS: $OS" >&2; exit 1 ;;
-esac
+# --- Create directories ---
+for dir in /var/ragger /var/log/ragger; do
+    if [ ! -d "$dir" ]; then
+        info "Creating $dir"
+        mkdir -p "$dir"
+        chown "$RAGGER_USER:$RAGGER_GROUP" "$dir"
+        chmod 0750 "$dir"
+    fi
+done
 
-echo "[+] Installing from $SRC to $DEST"
+# --- Install system config if missing ---
+if [ ! -f /etc/ragger.ini ]; then
+    info "Creating /etc/ragger.ini"
+    if [ -f example-system.ini ]; then
+        cp example-system.ini /etc/ragger.ini
+    else
+        cat > /etc/ragger.ini << 'EOF'
+[server]
+host = 127.0.0.1
+port = 8432
+single_user = true
+
+[logging]
+log_dir = /var/log/ragger
+
+[embedding]
+model = all-MiniLM-L6-v2
+dimensions = 384
+
+[search]
+default_limit = 5
+default_min_score = 0.4
+bm25_weight = 0.3
+vector_weight = 0.7
+
+[auth]
+token_rotation_minutes = 1440
+EOF
+    fi
+    chmod 0644 /etc/ragger.ini
+fi
+
+# --- Install LaunchDaemon (macOS) if missing ---
+if [ "$OS" = "Darwin" ]; then
+    PLIST="/Library/LaunchDaemons/com.diskerror.ragger.plist"
+    if [ ! -f "$PLIST" ]; then
+        info "Installing LaunchDaemon"
+        cat > "$PLIST" << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.diskerror.ragger</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/usr/local/bin/ragger-start.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/var/log/ragger/stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/ragger/stderr.log</string>
+</dict>
+</plist>
+EOF
+        chmod 0644 "$PLIST"
+    fi
+fi
+
+# --- Sync code to install location ---
+info "Installing to $DEST"
 mkdir -p "$DEST"
 
 rsync -a --delete \
@@ -61,61 +191,42 @@ rsync -a --delete \
     --exclude='memories.db' \
     "$SRC/" "$DEST/"
 
-# Create venv if missing
+# --- Create venv ---
 if [ ! -d "$DEST/.venv" ]; then
-    echo "[+] Creating venv..."
+    info "Creating venv"
     python3 -m venv "$DEST/.venv"
 fi
 
-# Always install/update dependencies
+# --- Install dependencies ---
 if [ -f "$DEST/requirements.txt" ]; then
-    echo "[+] Installing/updating dependencies..."
+    info "Installing dependencies"
     "$DEST/.venv/bin/pip" install -q --upgrade -r "$DEST/requirements.txt"
 fi
 
-# Detect user/group for log directory ownership
-case "$OS" in
-    Darwin) RAGGER_USER="_ragger"; RAGGER_GROUP="ragger" ;;
-    Linux)  RAGGER_USER="ragger";  RAGGER_GROUP="ragger" ;;
-    *)      RAGGER_USER="ragger";  RAGGER_GROUP="ragger" ;;
-esac
-
-# Create log directory if needed
-LOG_DIR="/var/log/ragger"
-if [ ! -d "$LOG_DIR" ]; then
-    echo "[+] Creating $LOG_DIR"
-    mkdir -p "$LOG_DIR"
-    chown "$RAGGER_USER:$RAGGER_GROUP" "$LOG_DIR"
-    chmod 0750 "$LOG_DIR"
-fi
-
-# Install wrapper script
-WRAPPER="/usr/local/bin/ragger"
-echo "[+] Installing wrapper to $WRAPPER"
-tee "$WRAPPER" > /dev/null << SCRIPT
+# --- Install wrapper script ---
+info "Installing /usr/local/bin/ragger"
+cat > /usr/local/bin/ragger << EOF
 #!/bin/bash
 export PYTHONPATH="$DEST"
 exec "$DEST/.venv/bin/python" -m ragger_memory.cli "\$@"
-SCRIPT
-chmod 0755 "$WRAPPER"
+EOF
+chmod 0755 /usr/local/bin/ragger
 
-# Restart daemon if running
+# --- Restart daemon ---
 if [ "$OS" = "Darwin" ]; then
-    PLIST="com.diskerror.ragger"
-    if launchctl list "$PLIST" &>/dev/null; then
-        echo "[+] Restarting daemon..."
-        launchctl kickstart -k "system/$PLIST"
+    if launchctl list com.diskerror.ragger &>/dev/null; then
+        info "Restarting daemon"
+        launchctl kickstart -k system/com.diskerror.ragger
     else
-        echo "[*] Daemon not loaded — skipping restart"
+        info "Daemon not loaded — run: sudo launchctl load $PLIST"
     fi
 elif [ "$OS" = "Linux" ]; then
     if systemctl is-active --quiet ragger; then
-        echo "[+] Restarting daemon..."
+        info "Restarting daemon"
         systemctl restart ragger
-    else
-        echo "[*] Service not active — skipping restart"
     fi
 fi
 
 echo ""
-echo "✓ Installed: $WRAPPER → $DEST"
+info "Installed: /usr/local/bin/ragger → $DEST"
+/usr/local/bin/ragger --version 2>/dev/null || true
