@@ -23,13 +23,22 @@ A [C++ port](https://github.com/diskerror/ragger.cpp) is also available with the
 
 ## Quick Start
 
+**Production install** (creates system user/group, installs as service):
 ```bash
-# Install dependencies
+cd /path/to/Ragger
+sudo ./install.sh
+```
+
+**Development setup** (local venv):
+```bash
 cd /path/to/Ragger
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+```
 
+**Usage:**
+```bash
 # Store a memory
 ragger store "The deploy script requires Node 18+"
 
