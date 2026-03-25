@@ -67,11 +67,10 @@ First run downloads the embedding model (~90MB) to your HuggingFace cache. After
 | [Chat Persistence](docs/chat-persistence.md) | Turn storage, summaries, cleanup |
 | [Deployment](docs/deployment.md) | Production setup, LaunchDaemon, multi-user |
 | [Project Structure](docs/project-structure.md) | Code layout, database schema |
-| [OpenClaw Integration](OPENCLAW.md) | Plugin setup for OpenClaw |
+| [OpenClaw Integration](docs/openclaw.md) | Plugin setup for OpenClaw |
 | [Agent Guide](docs/agent-integration.md) | Best practices for AI agents |
 | [Testing Your Install](docs/testing-your-install.md) | Verify with your own data |
 | [Design Decisions](docs/design-decisions.md) | Why things are the way they are |
-| [Roadmap](ROADMAP.md) | Future plans |
 
 ## Status
 
