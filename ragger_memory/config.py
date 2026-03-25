@@ -193,7 +193,7 @@ def _bootstrap_user_config() -> str:
     os.makedirs(ragger_dir, exist_ok=True)
     with open(conf_path, "w") as f:
         f.write(USER_DEFAULT_CONFIG)
-    print(f"Created user config: {conf_path}", file=sys.stderr)
+    print(f"Created user config: {conf_path}")
     return conf_path
 
 
@@ -261,7 +261,7 @@ max_turns_stored = 100
 
     with open(conf_path, "w") as f:
         f.write(single_user_config)
-    print(f"Created default config: {conf_path}", file=sys.stderr)
+    print(f"Created default config: {conf_path}")
     return conf_path
 
 
