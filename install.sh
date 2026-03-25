@@ -97,13 +97,14 @@ else
     fi
 fi
 
-# --- Create directories ---
+# --- Create directories and fix ownership ---
 for dir in /var/ragger /var/log/ragger; do
     if [ ! -d "$dir" ]; then
         info "Creating $dir"
         mkdir -p "$dir"
-        chown "$RAGGER_USER:$RAGGER_GROUP" "$dir"
-        chmod 0750 "$dir"
+    fi
+    chown -R "$RAGGER_USER:$RAGGER_GROUP" "$dir"
+    chmod 0750 "$dir"
     fi
 done
 
