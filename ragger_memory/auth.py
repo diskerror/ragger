@@ -159,3 +159,79 @@ def register_user_in_db(username: str, token: str, is_admin: bool = False):
     user_id = backend.create_user(username, hashed, is_admin=is_admin)
     backend.close()
     return user_id
+
+
+def rotate_token_for_user(username: str, home_dir: str | None = None) -> tuple[str, str]:
+    """
+    Rotate a user's token: generate new token, write to file, return new token + hash.
+    
+    Args:
+        username: System username
+        home_dir: Override home directory (default: look up from passwd)
+    
+    Returns:
+        (new_token, new_token_hash) tuple
+    """
+    if home_dir is None:
+        import pwd
+        pw = pwd.getpwnam(username)
+        home_dir = pw.pw_dir
+    
+    path = os.path.join(home_dir, ".ragger", "token")
+    
+    # Generate new token
+    new_token = generate_token()
+    
+    # Write to file
+    with open(path, "w") as f:
+        f.write(new_token + "\n")
+    
+    # Ensure permissions are still correct (0640)
+    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP)
+    
+    return new_token, hash_token(new_token)
+
+
+def rotate_token_for_user(username: str, home_dir: str | None = None) -> tuple[str, str]:
+    """
+    Generate a new token for a user and write it to their token file.
+    
+    Args:
+        username: System username
+        home_dir: Override home directory (default: look up from passwd)
+    
+    Returns:
+        (new_token, new_hash) — the new token and its SHA-256 hash
+    """
+    if home_dir is None:
+        import pwd
+        pw = pwd.getpwnam(username)
+        home_dir = pw.pw_dir
+    
+    # Generate new token
+    new_token = generate_token()
+    
+    # Write to user's token file
+    ragger_dir = os.path.join(home_dir, ".ragger")
+    token_file = os.path.join(ragger_dir, "token")
+    
+    # Ensure directory exists
+    os.makedirs(ragger_dir, exist_ok=True)
+    
+    with open(token_file, "w") as f:
+        f.write(new_token + "\n")
+    
+    # Set permissions: 0640 (owner rw + group read for daemon)
+    os.chmod(token_file, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP)
+    
+    # Set ownership if running as root
+    if os.getuid() == 0:
+        import pwd
+        try:
+            pw = pwd.getpwnam(username)
+            os.chown(token_file, pw.pw_uid, pw.pw_gid)
+        except KeyError:
+            pass
+    
+    new_hash = hash_token(new_token)
+    return new_token, new_hash

@@ -97,6 +97,10 @@ vector_weight = 7
 bm25_k1 = 1.5
 bm25_b = 0.75
 
+[auth]
+# Token rotation (in minutes, 0 = never, default 1440 = 24h)
+token_rotation_minutes = 1440
+
 [inference]
 # provider = openai-compatible
 # api_url = https://api.anthropic.com/v1
@@ -147,6 +151,8 @@ USER_DEFAULT_CONFIG = """\
 # default_collection = memory
 
 [inference]
+# Model preference: override system default for this user
+# Set via API: PUT /user/model {"model": "claude-sonnet-4-5"}
 # model = claude-sonnet-4-5
 
 [logging]
@@ -164,6 +170,8 @@ SERVER_LOCKED = {
     ("embedding", "model"),
     ("embedding", "dimensions"),
     ("embedding", "model_dir"),
+    # Auth (server controls rotation policy)
+    ("auth", "token_rotation_minutes"),
     # System ceilings (system controls the max, user sets preference within)
     ("chat", "max_turn_retention_minutes"),
     ("chat", "max_turns_stored"),
@@ -312,6 +320,9 @@ def load_config(path: str) -> dict:
         "port": getint("server", "port", 8432),
         "single_user": getbool("server", "single_user", True),
 
+        # Auth
+        "token_rotation_minutes": getint("auth", "token_rotation_minutes", 1440),
+
         # Storage
         "db_path": get("storage", "db_path", "~/.ragger/memories.db"),
         "common_db_path": get("storage", "common_db_path", "/var/ragger/memories.db"),
@@ -420,6 +431,8 @@ def load_layered_config(system_path: str | None, user_path: str | None) -> dict:
             ("server", "host"): "host",
             ("server", "port"): "port",
             ("server", "single_user"): "single_user",
+            # Auth
+            ("auth", "token_rotation_minutes"): "token_rotation_minutes",
             # Storage
             ("storage", "db_path"): "db_path",
             ("storage", "common_db_path"): "common_db_path",
@@ -474,7 +487,7 @@ def load_layered_config(system_path: str | None, user_path: str | None) -> dict:
             "inference_max_tokens", "minimum_chunk_size", "chat_pause_minutes",
             "chat_max_turn_retention_minutes", "chat_max_turns_stored",
             "chat_max_persona_chars", "chat_max_memory_results",
-            "chat_persona_pct"
+            "chat_persona_pct", "token_rotation_minutes"
         }
         float_keys = {
             "default_min_score", "bm25_weight", "vector_weight", "bm25_k1", "bm25_b",

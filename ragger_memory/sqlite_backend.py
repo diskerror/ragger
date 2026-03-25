@@ -135,6 +135,8 @@ class SqliteBackend(MemoryBackend):
             self._migrate_usage_fk()
             self._migrate_add_user_id()
             self._migrate_dedicated_columns()
+            self._migrate_add_token_rotated_at()
+            self._migrate_add_preferred_model()
             
             self.conn.commit()
             logger.info("SQLite schema ensured")
@@ -209,6 +211,43 @@ class SqliteBackend(MemoryBackend):
         except sqlite3.Error as e:
             logger.warning(f"dedicated columns migration skipped: {e}")
 
+    def _migrate_add_token_rotated_at(self):
+        """Add token_rotated_at column to users table if it doesn't exist."""
+        try:
+            cols = [row[1] for row in self.conn.execute(
+                "PRAGMA table_info(users)"
+            ).fetchall()]
+            if "token_rotated_at" not in cols:
+                # Add column with NULL default (will be set on first rotation)
+                self.conn.execute(
+                    "ALTER TABLE users ADD COLUMN token_rotated_at TEXT"
+                )
+                # Initialize existing users to current time
+                now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+                self.conn.execute(
+                    "UPDATE users SET token_rotated_at = ?",
+                    (now,)
+                )
+                self.conn.commit()
+                logger.info("Migrated users: added token_rotated_at column")
+        except sqlite3.Error as e:
+            logger.warning(f"token_rotated_at migration skipped: {e}")
+
+    def _migrate_add_preferred_model(self):
+        """Add preferred_model column to users table if it doesn't exist."""
+        try:
+            cols = [row[1] for row in self.conn.execute(
+                "PRAGMA table_info(users)"
+            ).fetchall()]
+            if "preferred_model" not in cols:
+                self.conn.execute(
+                    "ALTER TABLE users ADD COLUMN preferred_model TEXT"
+                )
+                self.conn.commit()
+                logger.info("Migrated users: added preferred_model column")
+        except sqlite3.Error as e:
+            logger.warning(f"preferred_model migration skipped: {e}")
+
     # --- User management ---
 
     def create_user(self, username: str, token_hash: str,
@@ -216,9 +255,9 @@ class SqliteBackend(MemoryBackend):
         """Create a user. Returns user id."""
         now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         cursor = self.conn.execute(
-            "INSERT INTO users (username, token_hash, is_admin, created, modified) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (username, token_hash, 1 if is_admin else 0, now, now)
+            "INSERT INTO users (username, token_hash, is_admin, created, modified, token_rotated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (username, token_hash, 1 if is_admin else 0, now, now, now)
         )
         self.conn.commit()
         return cursor.lastrowid
@@ -251,6 +290,38 @@ class SqliteBackend(MemoryBackend):
             (token_hash, username)
         )
         self.conn.commit()
+
+    def update_user_token_rotated_at(self, username: str, timestamp: str):
+        """Update a user's token_rotated_at timestamp."""
+        self.conn.execute(
+            "UPDATE users SET token_rotated_at = ? WHERE username = ?",
+            (timestamp, username)
+        )
+        self.conn.commit()
+
+    def get_user_token_rotated_at(self, username: str) -> str | None:
+        """Get a user's token_rotated_at timestamp."""
+        row = self.conn.execute(
+            "SELECT token_rotated_at FROM users WHERE username = ?",
+            (username,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def update_user_preferred_model(self, username: str, model: str | None):
+        """Update a user's preferred model."""
+        self.conn.execute(
+            "UPDATE users SET preferred_model = ? WHERE username = ?",
+            (model, username)
+        )
+        self.conn.commit()
+
+    def get_user_preferred_model(self, username: str) -> str | None:
+        """Get a user's preferred model."""
+        row = self.conn.execute(
+            "SELECT preferred_model FROM users WHERE username = ?",
+            (username,)
+        ).fetchone()
+        return row[0] if row else None
 
     def store_raw(
         self,
