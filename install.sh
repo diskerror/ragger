@@ -1,9 +1,9 @@
 #!/bin/bash
 # install.sh — Install Python Ragger to this machine
 #
-# Usage: ./install.sh
+# Usage: sudo ./install.sh
 #
-# Copies the project to /Users/Shared/Ragger (macOS) or
+# Copies the project to /usr/local/lib/ragger (macOS) or
 # /opt/ragger (Linux), creates a venv, and installs the
 # wrapper script to /usr/local/bin/ragger.
 
@@ -25,6 +25,12 @@ fi
 if ! python3 -c "import venv" 2>/dev/null; then
     echo -e "${RED}[!] Python venv module not available.${NC}"
     echo "    Linux (apt): sudo apt install python3-venv"
+    exit 1
+fi
+
+# Must run as root
+if [ "$(id -u)" -ne 0 ]; then
+    echo -e "${RED}[!] This script must be run as root:${NC} sudo ./install.sh" >&2
     exit 1
 fi
 
@@ -67,29 +73,45 @@ if [ -f "$DEST/requirements.txt" ]; then
     "$DEST/.venv/bin/pip" install -q --upgrade -r "$DEST/requirements.txt"
 fi
 
+# Detect user/group for log directory ownership
+case "$OS" in
+    Darwin) RAGGER_USER="_ragger"; RAGGER_GROUP="ragger" ;;
+    Linux)  RAGGER_USER="ragger";  RAGGER_GROUP="ragger" ;;
+    *)      RAGGER_USER="ragger";  RAGGER_GROUP="ragger" ;;
+esac
+
+# Create log directory if needed
+LOG_DIR="/var/log/ragger"
+if [ ! -d "$LOG_DIR" ]; then
+    echo "[+] Creating $LOG_DIR"
+    mkdir -p "$LOG_DIR"
+    chown "$RAGGER_USER:$RAGGER_GROUP" "$LOG_DIR"
+    chmod 0750 "$LOG_DIR"
+fi
+
 # Install wrapper script
 WRAPPER="/usr/local/bin/ragger"
-echo "[+] Installing wrapper to $WRAPPER (requires sudo)"
-sudo tee "$WRAPPER" > /dev/null << SCRIPT
+echo "[+] Installing wrapper to $WRAPPER"
+tee "$WRAPPER" > /dev/null << SCRIPT
 #!/bin/bash
 export PYTHONPATH="$DEST"
 exec "$DEST/.venv/bin/python" -m ragger_memory.cli "\$@"
 SCRIPT
-sudo chmod 0755 "$WRAPPER"
+chmod 0755 "$WRAPPER"
 
 # Restart daemon if running
 if [ "$OS" = "Darwin" ]; then
     PLIST="com.diskerror.ragger"
-    if sudo launchctl list "$PLIST" &>/dev/null; then
+    if launchctl list "$PLIST" &>/dev/null; then
         echo "[+] Restarting daemon..."
-        sudo launchctl kickstart -k "system/$PLIST"
+        launchctl kickstart -k "system/$PLIST"
     else
         echo "[*] Daemon not loaded — skipping restart"
     fi
 elif [ "$OS" = "Linux" ]; then
     if systemctl is-active --quiet ragger; then
         echo "[+] Restarting daemon..."
-        sudo systemctl restart ragger
+        systemctl restart ragger
     else
         echo "[*] Service not active — skipping restart"
     fi
