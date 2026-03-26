@@ -10,6 +10,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from .memory import RaggerMemory
 from .auth import load_token, validate_token, hash_token, ensure_token, token_path
 from .inference import InferenceClient
+from .chat_sessions import get_or_create_session, load_workspace_files, cleanup_expired_sessions
 
 logger = logging.getLogger(__name__)
 # Dedicated HTTP log (request/response details)
@@ -275,6 +276,110 @@ class RaggerHandler(BaseHTTPRequestHandler):
                 backend.update_user_preferred_model(username, model)
                 self._respond(200, {"status": "updated", "model": model, "username": username})
             
+            elif self.path == '/chat':
+                # Memory-augmented chat with SSE streaming
+                if not _inference_client:
+                    self._respond(503, {"error": "inference not configured"})
+                    return
+
+                message = params.get('message', '').strip()
+                if not message:
+                    self._respond(400, {"error": "message required"})
+                    return
+
+                session_id = params.get('session_id')
+                username = user.get('username', 'anonymous')
+                session = get_or_create_session(session_id, username)
+
+                # Search memory for context
+                memory_context = ""
+                try:
+                    cfg_obj = get_config()
+                    max_results = cfg_obj.get("chat_max_memory_results", 5)
+                    search_result = _memory.search(message, max_results, 0.3)
+                    chunks = [r['text'] for r in search_result.get('results', [])]
+                    if chunks:
+                        memory_context = "\n\n---\n\n".join(chunks)
+                except Exception as e:
+                    logger.warning(f"Memory search failed for /chat: {e}")
+
+                # Resolve model
+                backend = _memory._backend
+                preferred_model = backend.get_user_preferred_model(username)
+                request_model = params.get('model')
+                use_model = preferred_model or request_model or _inference_client.model
+
+                # Build messages with persona + memory + history
+                system_prompt = load_workspace_files()
+                session.add_user_message(message)
+                full_messages = session.build_messages(system_prompt, memory_context)
+
+                # Stream response via SSE
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/event-stream')
+                self.send_header('Cache-Control', 'no-cache')
+                self.send_header('X-Session-Id', session.session_id)
+                self.end_headers()
+
+                response_text = ""
+                try:
+                    stream = _inference_client.chat(
+                        messages=full_messages,
+                        stream=True,
+                        model=use_model,
+                    )
+                    for chunk in stream:
+                        delta = _inference_client.extract_delta(chunk, use_model)
+                        if delta:
+                            response_text += delta
+                            event = json.dumps({"token": delta})
+                            self.wfile.write(f"data: {event}\n\n".encode())
+                            self.wfile.flush()
+
+                    # Done event with session_id
+                    done_event = json.dumps({
+                        "done": True,
+                        "session_id": session.session_id
+                    })
+                    self.wfile.write(f"data: {done_event}\n\n".encode())
+                    self.wfile.flush()
+
+                    # Update session with assistant response
+                    if response_text:
+                        session.add_assistant_message(response_text)
+
+                        # Store turn if configured
+                        from .config import get_config as _gc
+                        cfg = _gc()
+                        store_turns = cfg.get("chat_store_turns", "true")
+                        if store_turns and store_turns != "false":
+                            try:
+                                _memory.store(
+                                    f"User: {message}\n\nAssistant: {response_text}",
+                                    {
+                                        "collection": "conversation",
+                                        "category": "chat-turn",
+                                        "source": f"chat-http-{username}",
+                                    }
+                                )
+                            except Exception as e:
+                                logger.warning(f"Turn storage failed: {e}")
+
+                    # Cleanup expired sessions in background
+                    import threading
+                    threading.Thread(
+                        target=cleanup_expired_sessions,
+                        args=(_memory, _inference_client),
+                        daemon=True
+                    ).start()
+
+                except Exception as e:
+                    error_event = json.dumps({"error": str(e)})
+                    self.wfile.write(f"data: {error_event}\n\n".encode())
+                    self.wfile.flush()
+
+                self._perform_rotation()
+
             elif self.path == '/v1/chat/completions':
                 # Inference proxy — respects user's preferred_model
                 if not _inference_client:
@@ -460,6 +565,7 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     print(f"  DELETE /memory/<id>         - delete by ID")
     print(f"  GET    /count               - memory count")
     print(f"  POST   /register            - {{\"username\": \"...\"}}")
+    print(f"  POST   /chat                - memory-augmented chat (SSE streaming)")
     print(f"  POST   /v1/chat/completions - inference proxy (respects user model)")
     print(f"  PUT    /user/model          - set preferred model")
     print(f"  GET    /user/model          - get preferred model")
