@@ -175,8 +175,11 @@ class RaggerHandler(BaseHTTPRequestHandler):
                     return
                 metadata = params.get('metadata') or {}
                 # Default collection to "memory" if not specified
-                if 'collection' not in metadata:
+                if 'collection' not in metadata or not metadata['collection']:
                     metadata['collection'] = 'memory'
+                # Default source to authenticated username
+                if 'source' not in metadata or not metadata['source']:
+                    metadata['source'] = user.get('username', 'unknown')
                 common = params.get('common', False)
                 memory_id = _memory.store(text, metadata, common=common)
                 self._respond(200, {"id": memory_id, "status": "stored"})
