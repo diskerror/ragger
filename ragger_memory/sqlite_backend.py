@@ -355,6 +355,14 @@ class SqliteBackend(MemoryBackend):
         ).fetchone()
         return row[0] if row else None
 
+    def delete_user(self, username: str):
+        """Remove a user from the users table."""
+        self.conn.execute(
+            "DELETE FROM users WHERE username = ?",
+            (username,)
+        )
+        self.conn.commit()
+
     def store_raw(
         self,
         text: str,

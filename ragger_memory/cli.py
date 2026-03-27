@@ -830,6 +830,10 @@ Examples:
     p_add_user.add_argument("username", type=str, help="Username to provision")
     p_add_user.add_argument("--admin", action="store_true", help="Grant admin privileges")
     sub.add_parser("add-all", help="Provision all users with home directories (requires sudo)")
+    p_rm_user = sub.add_parser("remove-user", help="Remove a user (requires sudo)")
+    p_rm_user.add_argument("username", type=str, help="Username to remove")
+    p_rm_user.add_argument("--keep-data", action="store_true",
+                           help="Keep ~/.ragger/ directory (only remove from DB and group)")
     p_passwd = sub.add_parser("passwd", help="Change password (own or another user's with sudo)")
     p_passwd.add_argument("username", nargs="?", default=None, help="Target user (default: self)")
 
@@ -925,6 +929,8 @@ Examples:
 
     elif args.verb == "add-user":
         import os
+        import platform
+        import subprocess
         from .auth import provision_user, hash_token
         from .embedding import Embedder
         from .sqlite_backend import SqliteBackend
@@ -938,6 +944,23 @@ Examples:
         except PermissionError:
             print(f"Error: permission denied. Run with sudo to provision other users.")
             return
+        # Add user to ragger group (requires root)
+        if os.getuid() == 0:
+            try:
+                if platform.system() == "Darwin":
+                    subprocess.run(
+                        ["dscl", ".", "-append", "/Groups/ragger",
+                         "GroupMembership", username],
+                        check=True, capture_output=True)
+                else:
+                    subprocess.run(
+                        ["usermod", "-aG", "ragger", username],
+                        check=True, capture_output=True)
+                print(f"✓ Added {username} to ragger group")
+            except subprocess.CalledProcessError as e:
+                print(f"Warning: could not add {username} to ragger group: {e}")
+            except FileNotFoundError:
+                print(f"Warning: could not add {username} to ragger group (command not found)")
         if created:
             print(f"✓ Created token for {username}")
         else:
@@ -962,7 +985,9 @@ Examples:
 
     elif args.verb == "add-all":
         import os
+        import platform
         import pwd
+        import subprocess
         from .auth import provision_user, hash_token
         from .embedding import Embedder
         from .sqlite_backend import SqliteBackend
@@ -989,6 +1014,9 @@ Examples:
             # Skip root and nobody
             if pw.pw_name in ('root', 'nobody', 'nfsnobody'):
                 continue
+            # Skip service accounts (names starting with _)
+            if pw.pw_name.startswith('_'):
+                continue
             # Skip users whose home is a system directory
             if pw.pw_dir in ('/', '/var', '/var/empty', '/dev/null',
                              '/nonexistent'):
@@ -996,6 +1024,20 @@ Examples:
             try:
                 token, created = provision_user(pw.pw_name, home_dir=pw.pw_dir)
                 status = "created" if created else "exists"
+                # Add to ragger group
+                try:
+                    if platform.system() == "Darwin":
+                        subprocess.run(
+                            ["dscl", ".", "-append", "/Groups/ragger",
+                             "GroupMembership", pw.pw_name],
+                            check=True, capture_output=True)
+                    else:
+                        subprocess.run(
+                            ["usermod", "-aG", "ragger", pw.pw_name],
+                            check=True, capture_output=True)
+                    status += ", group added"
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    status += ", group skipped"
                 try:
                     token_hash = hash_token(token)
                     existing = backend.get_user_by_username(pw.pw_name)
@@ -1014,6 +1056,94 @@ Examples:
                 print(f"  {pw.pw_name}: error ({e})")
         backend.close()
         print(f"✓ Processed {count} users")
+
+    elif args.verb == "remove-user":
+        import os
+        import platform
+        import shutil
+        import subprocess
+        from .embedding import Embedder
+        from .sqlite_backend import SqliteBackend
+        username = args.username
+        keep_data = getattr(args, 'keep_data', False)
+
+        if os.getuid() != 0:
+            print("Error: remove-user requires sudo")
+            return
+
+        errors = []
+
+        # 1. Remove from ragger OS group
+        try:
+            if platform.system() == "Darwin":
+                subprocess.run(
+                    ["dscl", ".", "-delete", "/Groups/ragger",
+                     "GroupMembership", username],
+                    check=True, capture_output=True)
+            else:
+                subprocess.run(
+                    ["gpasswd", "-d", username, "ragger"],
+                    check=True, capture_output=True)
+            print(f"✓ Removed {username} from ragger group")
+        except subprocess.CalledProcessError:
+            print(f"  {username} was not in ragger group (skipped)")
+        except FileNotFoundError as e:
+            errors.append(f"group removal command not found: {e}")
+
+        # 2. Remove from common database
+        try:
+            reg_db = cfg["db_path"] if cfg["single_user"] else cfg["common_db_path"]
+            embedder = Embedder()
+            backend = SqliteBackend(embedder, db_path=reg_db)
+            existing = backend.get_user_by_username(username)
+            if existing:
+                backend.delete_user(username)
+                print(f"✓ Removed {username} from database")
+            else:
+                print(f"  {username} not found in database (skipped)")
+            backend.close()
+        except Exception as e:
+            errors.append(f"database removal: {e}")
+
+        # 3. Remove token file
+        try:
+            import pwd as pwmod
+            pw = pwmod.getpwnam(username)
+            token_path = os.path.join(pw.pw_dir, ".ragger", "token")
+            if os.path.exists(token_path):
+                os.remove(token_path)
+                print(f"✓ Removed token ({token_path})")
+            else:
+                print(f"  No token file found (skipped)")
+        except KeyError:
+            print(f"  User {username} not found in system passwd (skipped token)")
+        except Exception as e:
+            errors.append(f"token removal: {e}")
+
+        # 4. Optionally remove ~/.ragger/ directory
+        if not keep_data:
+            try:
+                import pwd as pwmod
+                pw = pwmod.getpwnam(username)
+                ragger_dir = os.path.join(pw.pw_dir, ".ragger")
+                if os.path.isdir(ragger_dir):
+                    shutil.rmtree(ragger_dir)
+                    print(f"✓ Removed {ragger_dir}")
+                else:
+                    print(f"  No ~/.ragger/ directory found (skipped)")
+            except KeyError:
+                pass  # already reported above
+            except Exception as e:
+                errors.append(f"directory removal: {e}")
+        else:
+            print(f"  Kept ~/.ragger/ directory (--keep-data)")
+
+        if errors:
+            print(f"\nWarnings:")
+            for err in errors:
+                print(f"  ⚠ {err}")
+        else:
+            print(f"\n✓ User {username} fully removed")
 
     elif args.verb == "passwd":
         import os

@@ -29,6 +29,12 @@ cd /path/to/Ragger
 sudo ./install.sh
 ```
 
+The installer is interactive: it asks for single-user or multi-user mode,
+creates all system resources, installs the executable, then walks through
+every user on the system — offering to add, remove, or configure client
+integrations (OpenClaw, Claude Desktop) for each. Safe to re-run on
+upgrades; only the executable is overwritten.
+
 **Development setup** (local venv):
 ```bash
 cd /path/to/Ragger
@@ -175,3 +181,7 @@ See [Collections](docs/collections.md) for best practices and AI agent integrati
 ## License
 
 GPL v3 — See [LICENSE](LICENSE) for details.
+
+**Commercial licensing:** If you'd like to use Ragger in a proprietary
+product without GPL obligations, commercial licenses are available.
+Contact reid@diskerror.com.
