@@ -100,6 +100,15 @@ def load_workspace_files() -> str:
     user_dir = os.path.expanduser("~/.ragger")
     common_dir = "/var/ragger"
     
+    # Multi-user mode requires SOUL.md in common dir
+    if not cfg["single_user"]:
+        soul_path = os.path.join(common_dir, "SOUL.md")
+        if not os.path.exists(soul_path):
+            raise RuntimeError(
+                f"Multi-user mode requires SOUL.md in {common_dir}\n"
+                "SOUL.md defines the assistant's personality and must be present for consistent behavior."
+            )
+    
     # (filename, allow_common)
     file_specs = [
         ("SOUL.md", True),    # Allow common dir

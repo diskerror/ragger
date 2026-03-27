@@ -154,6 +154,16 @@ EOF
     chmod 0644 "$CONF_FILE"
 fi
 
+# --- Install default SOUL.md if missing ---
+SOUL_DEST="$DATA_DIR/SOUL.md"
+SOUL_SRC="$SRC/SOUL.md"
+if [ ! -f "$SOUL_DEST" ] && [ -f "$SOUL_SRC" ]; then
+    info "Installing default SOUL.md to $DATA_DIR"
+    cp "$SOUL_SRC" "$SOUL_DEST"
+    chown "$RAGGER_USER:$RAGGER_GROUP" "$SOUL_DEST"
+    chmod 0644 "$SOUL_DEST"
+fi
+
 # --- Install/update LaunchDaemon (macOS) ---
 if [ "$OS" = "Darwin" ]; then
     PLIST="/Library/LaunchDaemons/com.diskerror.ragger.plist"
