@@ -830,6 +830,8 @@ Examples:
     p_add_user.add_argument("username", type=str, help="Username to provision")
     p_add_user.add_argument("--admin", action="store_true", help="Grant admin privileges")
     sub.add_parser("add-all", help="Provision all users with home directories (requires sudo)")
+    p_passwd = sub.add_parser("passwd", help="Change password (own or another user's with sudo)")
+    p_passwd.add_argument("username", nargs="?", default=None, help="Target user (default: self)")
 
     # --- rebuild-bm25 ---
     sub.add_parser("rebuild-bm25", help="Rebuild BM25 index from all documents")
@@ -986,6 +988,63 @@ Examples:
             except Exception as e:
                 print(f"  {pw.pw_name}: error ({e})")
         print(f"✓ Processed {count} users")
+
+    elif args.verb == "passwd":
+        import os
+        import getpass
+        from .auth import hash_password, verify_password
+        from .embedding import Embedder
+        from .sqlite_backend import SqliteBackend
+
+        # Determine target user
+        if args.username:
+            if os.getuid() != 0:
+                print("Error: changing another user's password requires sudo")
+                return
+            target_user = args.username
+        else:
+            import pwd as _pwd
+            target_user = _pwd.getpwuid(os.getuid()).pw_name
+
+        # Open database directly
+        db_path = cfg.get("common_db_path") if not cfg["single_user"] else cfg["db_path"]
+        embedder = Embedder()
+        backend = SqliteBackend(embedder, db_path=db_path)
+
+        # Verify user exists
+        user_info = backend.get_user_by_username(target_user)
+        if not user_info:
+            print(f"Error: user '{target_user}' not found in database")
+            print(f"Provision the user first: sudo ragger add-user {target_user}")
+            backend.close()
+            return
+
+        # If changing own password and not root, verify current
+        if not args.username:
+            existing = backend.get_user_password(target_user)
+            if existing:
+                current = getpass.getpass("Current password: ")
+                if not verify_password(current, existing):
+                    print("Error: incorrect password")
+                    backend.close()
+                    return
+
+        # Read new password
+        new_pass = getpass.getpass("New password: ")
+        if not new_pass:
+            print("Password cleared (web UI access disabled).")
+            backend.set_user_password(target_user, None)
+        else:
+            confirm = getpass.getpass("Confirm password: ")
+            if new_pass != confirm:
+                print("Error: passwords do not match")
+                backend.close()
+                return
+            hashed = hash_password(new_pass)
+            backend.set_user_password(target_user, hashed)
+            print(f"✓ Password updated for {target_user}")
+
+        backend.close()
 
     elif args.verb == "rebuild-bm25":
         from .embedding import Embedder

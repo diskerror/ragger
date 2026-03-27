@@ -12,6 +12,7 @@ import hashlib
 import os
 import secrets
 import stat
+import hmac
 
 
 def token_path() -> str:
@@ -71,6 +72,38 @@ def load_token() -> str | None:
 def validate_token(provided: str, expected: str) -> bool:
     """Constant-time token comparison"""
     return secrets.compare_digest(provided, expected)
+
+
+# ---- Password hashing (PBKDF2-SHA256) ----
+
+PBKDF2_ITERATIONS = 600000
+PBKDF2_SALT_LEN = 16
+PBKDF2_KEY_LEN = 32
+
+
+def hash_password(password: str) -> str:
+    """Hash a password using PBKDF2-SHA256. Returns 'pbkdf2:iterations:salt_hex:key_hex'."""
+    salt = os.urandom(PBKDF2_SALT_LEN)
+    key = hashlib.pbkdf2_hmac(
+        "sha256", password.encode(), salt, PBKDF2_ITERATIONS, dklen=PBKDF2_KEY_LEN
+    )
+    return f"pbkdf2:{PBKDF2_ITERATIONS}:{salt.hex()}:{key.hex()}"
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    """Verify a password against a stored PBKDF2 hash string."""
+    if not stored_hash.startswith("pbkdf2:"):
+        return False
+    parts = stored_hash.split(":")
+    if len(parts) != 4:
+        return False
+    iterations = int(parts[1])
+    salt = bytes.fromhex(parts[2])
+    expected_key = bytes.fromhex(parts[3])
+    key = hashlib.pbkdf2_hmac(
+        "sha256", password.encode(), salt, iterations, dklen=len(expected_key)
+    )
+    return hmac.compare_digest(key, expected_key)
 
 
 def token_path_for_user(username: str) -> str:

@@ -137,6 +137,7 @@ class SqliteBackend(MemoryBackend):
             self._migrate_dedicated_columns()
             self._migrate_add_token_rotated_at()
             self._migrate_add_preferred_model()
+            self._migrate_add_password_hash()
             
             self.conn.commit()
             logger.info("SQLite schema ensured")
@@ -248,6 +249,21 @@ class SqliteBackend(MemoryBackend):
         except sqlite3.Error as e:
             logger.warning(f"preferred_model migration skipped: {e}")
 
+    def _migrate_add_password_hash(self):
+        """Add password_hash column to users table if it doesn't exist."""
+        try:
+            cols = [row[1] for row in self.conn.execute(
+                "PRAGMA table_info(users)"
+            ).fetchall()]
+            if "password_hash" not in cols:
+                self.conn.execute(
+                    "ALTER TABLE users ADD COLUMN password_hash TEXT"
+                )
+                self.conn.commit()
+                logger.info("Migrated users: added password_hash column")
+        except sqlite3.Error as e:
+            logger.warning(f"password_hash migration skipped: {e}")
+
     # --- User management ---
 
     def create_user(self, username: str, token_hash: str,
@@ -319,6 +335,22 @@ class SqliteBackend(MemoryBackend):
         """Get a user's preferred model."""
         row = self.conn.execute(
             "SELECT preferred_model FROM users WHERE username = ?",
+            (username,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def set_user_password(self, username: str, password_hash: str | None):
+        """Set a user's password hash. None or empty string clears it."""
+        self.conn.execute(
+            "UPDATE users SET password_hash = ? WHERE username = ?",
+            (password_hash if password_hash else None, username)
+        )
+        self.conn.commit()
+
+    def get_user_password(self, username: str) -> str | None:
+        """Get a user's password hash. Returns None if not set."""
+        row = self.conn.execute(
+            "SELECT password_hash FROM users WHERE username = ?",
             (username,)
         ).fetchone()
         return row[0] if row else None
