@@ -85,14 +85,58 @@ def get_or_create_session(session_id: Optional[str], username: str) -> ChatSessi
 
 
 def load_workspace_files() -> str:
-    """Load persona/workspace files for system prompt."""
-    workspace_dir = os.path.expanduser("~/.ragger")
-    files = ["SOUL.md", "USER.md", "AGENTS.md", "TOOLS.md"]
+    """Load persona/workspace files for system prompt.
+    
+    SOUL.md priority:
+    - Single-user mode: ~/.ragger/SOUL.md first, fall back to /var/ragger/SOUL.md
+    - Multi-user mode: /var/ragger/SOUL.md only (no user fallback)
+    
+    Other files (USER.md, MEMORY.md): user dir only
+    Shared files (AGENTS.md, TOOLS.md): follow same priority as SOUL.md
+    """
+    from .config import get_config
+    cfg = get_config()
+    
+    user_dir = os.path.expanduser("~/.ragger")
+    common_dir = "/var/ragger"
+    
+    # (filename, allow_common)
+    file_specs = [
+        ("SOUL.md", True),    # Allow common dir
+        ("USER.md", False),   # User only
+        ("AGENTS.md", True),  # Allow common dir
+        ("TOOLS.md", True),   # Allow common dir
+    ]
+    
     parts = []
-
-    for fname in files:
-        fpath = os.path.join(workspace_dir, fname)
-        if os.path.exists(fpath):
+    
+    for fname, allow_common in file_specs:
+        fpath = None
+        
+        if cfg["single_user"]:
+            # Single-user mode: user dir first, fall back to common
+            user_path = os.path.join(user_dir, fname)
+            if os.path.exists(user_path):
+                fpath = user_path
+            elif allow_common:
+                common_path = os.path.join(common_dir, fname)
+                if os.path.exists(common_path):
+                    fpath = common_path
+        else:
+            # Multi-user mode: common dir first, NO fallback for SOUL.md
+            if allow_common:
+                common_path = os.path.join(common_dir, fname)
+                if os.path.exists(common_path):
+                    fpath = common_path
+            
+            # For non-SOUL files with allow_common, fall back to user
+            # For SOUL.md in multi-user mode, stop here (no fallback)
+            if not fpath and (fname != "SOUL.md" or not allow_common):
+                user_path = os.path.join(user_dir, fname)
+                if os.path.exists(user_path):
+                    fpath = user_path
+        
+        if fpath:
             try:
                 with open(fpath) as f:
                     content = f.read().strip()
