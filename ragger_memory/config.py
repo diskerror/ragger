@@ -224,7 +224,9 @@ default_collection = memory
 [embedding]
 model = all-MiniLM-L6-v2
 dimensions = 384
-# model_dir = ~/.ragger/models
+# model_dir: path to embedding model files
+# Personal (default): model_dir = ~/.ragger/models
+# Shared (recommended if multi-user): model_dir = /var/ragger/models
 
 [search]
 default_limit = 5
