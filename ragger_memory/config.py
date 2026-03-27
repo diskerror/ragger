@@ -224,9 +224,9 @@ default_collection = memory
 [embedding]
 model = all-MiniLM-L6-v2
 dimensions = 384
-# model_dir: path to embedding model files
-# Personal (default): model_dir = ~/.ragger/models
-# Shared (recommended if multi-user): model_dir = /var/ragger/models
+# model_dir: path to embedding model files (default: /var/ragger/models)
+# All users on the same system must use the same embedding model
+# for vector search to work correctly.
 
 [search]
 default_limit = 5
@@ -395,7 +395,7 @@ def load_config(path: str) -> dict:
         cfg["db_path"] = "~/.ragger/memories.db" if single_user else cfg["common_db_path"]
     
     if not cfg["model_dir"]:
-        cfg["model_dir"] = "~/.ragger/models" if single_user else "/var/ragger/models"
+        cfg["model_dir"] = "/var/ragger/models"  # Always use shared - embedding model must be consistent
     
     if not cfg["log_dir"]:
         cfg["log_dir"] = "~/.ragger" if single_user else "/var/log/ragger"
