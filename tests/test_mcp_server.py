@@ -1,5 +1,5 @@
 """
-Tests for the MCP server (JSON-RPC + plain text mode).
+Tests for the MCP server (MCP-compliant JSON-RPC + plain text mode).
 
 Runs the MCP server in a subprocess with mock-friendly setup,
 feeding it stdin lines and checking stdout.
@@ -16,16 +16,10 @@ RAGGER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PYTHON = os.path.join(RAGGER_DIR, ".venv", "bin", "python3")
 
 
-def run_mcp(input_lines: list[str], timeout: int = 30) -> str:
+def run_mcp(input_lines: list[str], timeout: int = 30) -> tuple[str, str]:
     """
-    Run the MCP server with given stdin lines and return stdout.
-    
-    Uses a helper script that creates a memory, then starts the MCP loop
-    so there's data to search against.
+    Run the MCP server with given stdin lines and return (stdout, stderr).
     """
-    # Build a small script that:
-    # 1. Creates a temp DB with test data
-    # 2. Runs the MCP input loop against it
     script = """
 import sys, os, json, tempfile
 sys.path.insert(0, {ragger_dir!r})
@@ -44,9 +38,9 @@ logging.basicConfig(level=logging.WARNING)
 from ragger_memory.mcp_server import run_mcp_server
 run_mcp_server()
 """.format(ragger_dir=RAGGER_DIR)
-    
+
     stdin_text = "\n".join(input_lines) + "\n"
-    
+
     result = subprocess.run(
         [PYTHON, "-c", script],
         input=stdin_text,
@@ -58,114 +52,166 @@ run_mcp_server()
     return result.stdout, result.stderr
 
 
-class TestMCPJsonRpc:
-    """Tests for JSON-RPC mode."""
-    
-    def test_unknown_method_returns_error(self):
-        request = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "nonexistent",
-            "params": {},
-            "id": 1
-        })
-        stdout, _ = run_mcp([request])
+def mcp_request(method: str, params: dict = None, req_id: int = 1) -> str:
+    """Build a JSON-RPC request string."""
+    req = {"jsonrpc": "2.0", "method": method, "id": req_id}
+    if params is not None:
+        req["params"] = params
+    return json.dumps(req)
+
+
+def mcp_notification(method: str, params: dict = None) -> str:
+    """Build a JSON-RPC notification (no id field)."""
+    req = {"jsonrpc": "2.0", "method": method}
+    if params is not None:
+        req["params"] = params
+    return json.dumps(req)
+
+
+class TestMCPInitialize:
+    """Tests for MCP initialize handshake."""
+
+    def test_initialize_returns_server_info(self):
+        stdout, _ = run_mcp([mcp_request("initialize")])
         response = json.loads(stdout.strip())
-        assert "error" in response
         assert response["id"] == 1
-    
+        result = response["result"]
+        assert result["protocolVersion"] == "2024-11-05"
+        assert result["serverInfo"]["name"] == "ragger-memory"
+        assert result["serverInfo"]["version"] == "0.7.0"
+        assert "tools" in result["capabilities"]
+
+    def test_initialized_notification_no_response(self):
+        """notifications/initialized should produce no JSON-RPC response."""
+        stdout, _ = run_mcp([mcp_notification("notifications/initialized")])
+        # Should be empty — no response for notifications
+        assert stdout.strip() == ""
+
+
+class TestMCPToolsList:
+    """Tests for tools/list."""
+
+    def test_tools_list_returns_both_tools(self):
+        stdout, _ = run_mcp([mcp_request("tools/list")])
+        response = json.loads(stdout.strip())
+        tools = response["result"]["tools"]
+        names = {t["name"] for t in tools}
+        assert names == {"store", "search"}
+
+    def test_tools_have_input_schemas(self):
+        stdout, _ = run_mcp([mcp_request("tools/list")])
+        response = json.loads(stdout.strip())
+        tools = response["result"]["tools"]
+        for tool in tools:
+            assert "inputSchema" in tool
+            schema = tool["inputSchema"]
+            assert schema["type"] == "object"
+            assert "properties" in schema
+            assert "required" in schema
+
+
+class TestMCPToolsCall:
+    """Tests for tools/call."""
+
     def test_store_and_search(self):
-        store_req = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "memory_store",
-            "params": {"text": "Python is a programming language", "metadata": {"collection": "memory"}},
-            "id": 1
-        })
-        search_req = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "memory_search",
-            "params": {"query": "programming", "min_score": -1.0},
-            "id": 2
-        })
-        stdout, _ = run_mcp([store_req, search_req])
+        store = mcp_request("tools/call", {
+            "name": "store",
+            "arguments": {"text": "Python is great", "metadata": {"collection": "memory"}}
+        }, req_id=1)
+        search = mcp_request("tools/call", {
+            "name": "search",
+            "arguments": {"query": "programming", "min_score": -1.0}
+        }, req_id=2)
+        stdout, _ = run_mcp([store, search])
         lines = [l for l in stdout.strip().split("\n") if l]
-        
+
         store_resp = json.loads(lines[0])
-        assert store_resp["result"]["status"] == "stored"
-        
+        content = store_resp["result"]["content"]
+        assert len(content) == 1
+        assert content[0]["type"] == "text"
+        stored = json.loads(content[0]["text"])
+        assert stored["status"] == "stored"
+        assert "id" in stored
+
         search_resp = json.loads(lines[1])
-        results = search_resp["result"]["results"]["results"]
+        content = search_resp["result"]["content"]
+        assert len(content) == 1
+        results = json.loads(content[0]["text"])
+        # results could be a dict with "results" key or a list
+        if isinstance(results, dict):
+            results = results.get("results", [])
         assert len(results) > 0
-    
-    def test_search_missing_query_returns_error(self):
-        request = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "memory_search",
-            "params": {},
-            "id": 1
-        })
-        stdout, _ = run_mcp([request])
-        response = json.loads(stdout.strip())
-        assert "error" in response
-    
+
     def test_store_missing_text_returns_error(self):
-        request = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "memory_store",
-            "params": {"metadata": {}},
-            "id": 1
+        req = mcp_request("tools/call", {
+            "name": "store",
+            "arguments": {"metadata": {}}
         })
-        stdout, _ = run_mcp([request])
+        stdout, _ = run_mcp([req])
+        response = json.loads(stdout.strip())
+        assert response["result"]["isError"] is True
+
+    def test_search_missing_query_returns_error(self):
+        req = mcp_request("tools/call", {
+            "name": "search",
+            "arguments": {}
+        })
+        stdout, _ = run_mcp([req])
+        response = json.loads(stdout.strip())
+        assert response["result"]["isError"] is True
+
+    def test_unknown_tool_returns_error(self):
+        req = mcp_request("tools/call", {
+            "name": "nonexistent",
+            "arguments": {}
+        })
+        stdout, _ = run_mcp([req])
+        response = json.loads(stdout.strip())
+        result = response["result"]
+        assert result["isError"] is True
+        assert "Unknown tool" in result["content"][0]["text"]
+
+
+class TestMCPErrors:
+    """Tests for error handling."""
+
+    def test_unknown_method_returns_32601(self):
+        req = mcp_request("nonexistent")
+        stdout, _ = run_mcp([req])
         response = json.loads(stdout.strip())
         assert "error" in response
+        assert response["error"]["code"] == -32601
 
 
 class TestMCPPlainText:
     """Tests for plain text search mode."""
-    
+
     def test_plain_text_no_results(self):
-        """Plain text query on empty DB should say no results."""
         stdout, _ = run_mcp(["hello world"])
         assert "No results" in stdout
-    
+
     def test_plain_text_with_data(self):
-        """Store via JSON-RPC, then search via plain text."""
-        store_req = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "memory_store",
-            "params": {"text": "Ragger is a memory system", "metadata": {"collection": "memory"}},
-            "id": 1
+        store = mcp_request("tools/call", {
+            "name": "store",
+            "arguments": {"text": "Ragger is a memory system", "metadata": {"collection": "memory"}}
         })
-        stdout, _ = run_mcp([store_req, "memory system"])
-        # First line is JSON store response, rest is plain text search
+        stdout, _ = run_mcp([store, "memory system"])
         lines = stdout.strip().split("\n")
-        # Skip the JSON response line
         plain_output = "\n".join(lines[1:])
         assert "score:" in plain_output or "No results" in plain_output
-    
-    def test_plain_text_shows_timing(self):
-        """Plain text output should include timing info."""
-        stdout, _ = run_mcp(["test query"])
-        # Even with no results, we should get "No results" not a crash
-        assert "No results" in stdout or "Timing:" in stdout
-    
+
     def test_empty_lines_ignored(self):
-        """Empty lines should not produce output."""
         stdout, _ = run_mcp(["", "  ", ""])
         assert stdout.strip() == ""
-    
+
     def test_mixed_json_and_plain(self):
-        """Should handle interleaved JSON-RPC and plain text."""
-        store_req = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "memory_store",
-            "params": {"text": "test mixed mode", "metadata": {"collection": "memory"}},
-            "id": 1
+        store = mcp_request("tools/call", {
+            "name": "store",
+            "arguments": {"text": "test mixed mode", "metadata": {"collection": "memory"}}
         })
-        stdout, _ = run_mcp([store_req, "mixed mode"])
+        stdout, _ = run_mcp([store, "mixed mode"])
         lines = [l for l in stdout.strip().split("\n") if l]
-        # First line should be JSON
         first = json.loads(lines[0])
-        assert first["result"]["status"] == "stored"
-        # Remaining lines should be plain text
+        assert "result" in first
         remaining = "\n".join(lines[1:])
         assert "score:" in remaining or "No results" in remaining

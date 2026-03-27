@@ -1,5 +1,14 @@
 """
-MCP JSON-RPC server for OpenClaw integration
+MCP-compliant JSON-RPC server for AI agent integration.
+
+Implements the Model Context Protocol (MCP) specification:
+https://modelcontextprotocol.io/docs/spec/
+
+Provides two tools:
+- store: Store a memory with optional metadata
+- search: Search memories by semantic similarity
+
+Also accepts plain text queries as a search shortcut for interactive use.
 """
 
 import sys
@@ -13,52 +22,121 @@ mcp_logger = logging.getLogger('ragger_memory.mcp')
 
 logger = logging.getLogger(__name__)
 
+SERVER_NAME = "ragger-memory"
+SERVER_VERSION = "0.7.0"
+PROTOCOL_VERSION = "2024-11-05"
+
+TOOLS = [
+    {
+        "name": "store",
+        "description": "Store a memory for later semantic retrieval.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The text content to store."
+                },
+                "metadata": {
+                    "type": "object",
+                    "description": "Optional metadata (category, tags, source, collection, etc.)."
+                }
+            },
+            "required": ["text"]
+        }
+    },
+    {
+        "name": "search",
+        "description": "Search stored memories by semantic similarity.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results (default: 5)."
+                },
+                "min_score": {
+                    "type": "number",
+                    "description": "Minimum similarity score 0-1 (default: 0.0)."
+                },
+                "collections": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Filter by collection names."
+                }
+            },
+            "required": ["query"]
+        }
+    }
+]
+
 
 def run_mcp_server():
     """
-    MCP JSON-RPC server
-    Reads requests from stdin, writes responses to stdout
+    MCP JSON-RPC server.
+    Reads requests from stdin, writes responses to stdout.
+    Supports MCP protocol (initialize, tools/list, tools/call)
+    and plain text search shortcuts for interactive use.
     """
     memory = RaggerMemory()
-    
+
     def send_response(response: dict):
-        """Send JSON-RPC response to stdout"""
+        """Send JSON-RPC response to stdout."""
         print(json.dumps(response), flush=True)
-    
+
     def handle_request(request: dict):
-        """Handle a single JSON-RPC request"""
+        """Handle a single JSON-RPC request."""
         method = request.get('method')
         params = request.get('params', {})
-        req_id = request.get('id')
-        
+        req_id = request.get('id')  # None for notifications
+
+        # Notifications (no id) get no response
+        if req_id is None:
+            mcp_logger.info(f"notification: {method}")
+            return
+
         try:
-            if method == 'memory_store':
-                text = params.get('text')
-                metadata = params.get('metadata')
-                if not text:
-                    raise ValueError("text parameter required")
-                memory_id = memory.store(text, metadata)
-                result = {"id": memory_id, "status": "stored"}
-            
-            elif method == 'memory_search':
-                query = params.get('query')
-                limit = params.get('limit', 5)
-                min_score = params.get('min_score', 0.0)
-                collections = params.get('collections', None)
-                if not query:
-                    raise ValueError("query parameter required")
-                results = memory.search(query, limit, min_score, collections)
-                result = {"results": results}
-            
+            if method == 'initialize':
+                result = {
+                    "protocolVersion": PROTOCOL_VERSION,
+                    "capabilities": {
+                        "tools": {}
+                    },
+                    "serverInfo": {
+                        "name": SERVER_NAME,
+                        "version": SERVER_VERSION
+                    }
+                }
+
+            elif method == 'tools/list':
+                result = {"tools": TOOLS}
+
+            elif method == 'tools/call':
+                tool_name = params.get('name')
+                arguments = params.get('arguments', {})
+                result = _handle_tool_call(memory, tool_name, arguments)
+
             else:
-                raise ValueError(f"Unknown method: {method}")
-            
+                send_response({
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {
+                        "code": -32601,
+                        "message": f"Method not found: {method}"
+                    }
+                })
+                return
+
             send_response({
                 "jsonrpc": "2.0",
                 "id": req_id,
                 "result": result
             })
-        
+
         except Exception as e:
             logger.error(f"Error handling {method}: {e}")
             send_response({
@@ -69,27 +147,68 @@ def run_mcp_server():
                     "message": str(e)
                 }
             })
-    
+
+    def _handle_tool_call(memory, tool_name: str, arguments: dict) -> dict:
+        """Dispatch a tools/call request. Returns MCP result with content."""
+        if tool_name == 'store':
+            text = arguments.get('text')
+            metadata = arguments.get('metadata')
+            if not text:
+                return {
+                    "content": [{"type": "text", "text": "Error: text parameter required"}],
+                    "isError": True
+                }
+            memory_id = memory.store(text, metadata)
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": json.dumps({"id": memory_id, "status": "stored"})
+                }]
+            }
+
+        elif tool_name == 'search':
+            query = arguments.get('query')
+            limit = arguments.get('limit', 5)
+            min_score = arguments.get('min_score', 0.0)
+            collections = arguments.get('collections', None)
+            if not query:
+                return {
+                    "content": [{"type": "text", "text": "Error: query parameter required"}],
+                    "isError": True
+                }
+            results = memory.search(query, limit, min_score, collections)
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": json.dumps(results)
+                }]
+            }
+
+        else:
+            return {
+                "content": [{"type": "text", "text": f"Unknown tool: {tool_name}"}],
+                "isError": True
+            }
+
     def handle_plain_text(query: str):
         """Handle a plain text query (non-JSON input) as a search."""
         try:
             search_result = memory.search(query)
             results = search_result.get("results", [])
             timing = search_result.get("timing", {})
-            
+
             if not results:
                 print("No results found.", flush=True)
                 return
-            
+
             for i, r in enumerate(results, 1):
                 score = r.get("score", 0.0)
                 text = r.get("text", "")
-                # Truncate long results for readability
                 preview = text[:200] + "..." if len(text) > 200 else text
                 meta = r.get("metadata", {})
                 source = meta.get("source", "")
                 collection = meta.get("collection", "")
-                
+
                 header = f"{i}. [score: {score:.3f}]"
                 if source:
                     header += f" ({source})"
@@ -98,22 +217,21 @@ def run_mcp_server():
                 print(header, flush=True)
                 print(f"   {preview}", flush=True)
                 print(flush=True)
-            
+
             corpus = timing.get("corpus_size", "?")
             total_ms = timing.get("total_ms", "?")
             print(f"Timing: {total_ms}ms ({corpus} chunks)", flush=True)
-        
+
         except Exception as e:
             print(f"Error: {e}", flush=True)
-    
+
     # Main loop: read requests from stdin
-    # Accepts JSON-RPC (MCP) or plain text (search shortcut)
     mcp_logger.info("MCP server started, waiting for requests...")
     for line in sys.stdin:
         line = line.strip()
         if not line:
             continue
-        
+
         # Try JSON-RPC first; fall back to plain text search
         if line.startswith("{"):
             try:
@@ -121,11 +239,10 @@ def run_mcp_server():
                 mcp_logger.info(f"request: {request.get('method', 'unknown')}")
                 handle_request(request)
             except json.JSONDecodeError:
-                # Looks like JSON but isn't — treat as plain text
                 mcp_logger.info(f"plain text query: {line[:100]}")
                 handle_plain_text(line)
         else:
             mcp_logger.info(f"plain text query: {line[:100]}")
             handle_plain_text(line)
-    
+
     memory.close()
