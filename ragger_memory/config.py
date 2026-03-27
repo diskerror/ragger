@@ -314,7 +314,7 @@ def load_config(path: str) -> dict:
     def getbool(section, key, fallback):
         return parser.getboolean(section, key, fallback=fallback)
 
-    return {
+    cfg = {
         # Server
         "host": get("server", "host", "127.0.0.1"),
         "port": getint("server", "port", 8432),
@@ -324,7 +324,7 @@ def load_config(path: str) -> dict:
         "token_rotation_minutes": getint("auth", "token_rotation_minutes", 1440),
 
         # Storage
-        "db_path": get("storage", "db_path", "~/.ragger/memories.db"),
+        "db_path": get("storage", "db_path", ""),  # Resolved below based on single_user
         "common_db_path": get("storage", "common_db_path", "/var/ragger/memories.db"),
         "default_collection": get("storage", "default_collection", "memory"),
         "formats_dir": get("storage", "formats_dir", "/var/ragger/formats"),
@@ -332,7 +332,7 @@ def load_config(path: str) -> dict:
         # Embedding
         "embedding_model": get("embedding", "model", "all-MiniLM-L6-v2"),
         "embedding_dimensions": getint("embedding", "dimensions", 384),
-        "model_dir": get("embedding", "model_dir", ""),
+        "model_dir": get("embedding", "model_dir", ""),  # Resolved below based on single_user
 
         # Search
         "default_search_limit": getint("search", "default_limit", 5),
@@ -356,7 +356,7 @@ def load_config(path: str) -> dict:
         "inference_endpoints": _parse_inference_endpoints(parser),
 
         # Logging
-        "log_dir": get("logging", "log_dir", "~/.ragger"),
+        "log_dir": get("logging", "log_dir", ""),  # Resolved below based on single_user
         "query_log_enabled": getbool("logging", "query_log", True),
         "http_log_enabled": getbool("logging", "http_log", True),
         "mcp_log_enabled": getbool("logging", "mcp_log", True),
@@ -385,6 +385,20 @@ def load_config(path: str) -> dict:
         # User
         "user_mode": get("user", "mode", "memory-only"),
     }
+    
+    # Resolve context-aware defaults based on single_user mode
+    single_user = cfg["single_user"]
+    
+    if not cfg["db_path"]:
+        cfg["db_path"] = "~/.ragger/memories.db" if single_user else cfg["common_db_path"]
+    
+    if not cfg["model_dir"]:
+        cfg["model_dir"] = "~/.ragger/models" if single_user else "/var/ragger/models"
+    
+    if not cfg["log_dir"]:
+        cfg["log_dir"] = "~/.ragger" if single_user else "/var/log/ragger"
+    
+    return cfg
 
 
 def _clamp_to_ceiling(cfg: dict, value_key: str, ceiling_key: str):
