@@ -894,29 +894,40 @@ Examples:
         print("✓ Model is up to date")
 
     elif args.verb == "add-self":
-        import getpass
-        from .auth import provision_user
-        username = getpass.getuser()
+        import os
+        import getpass as _getpass
+        from .auth import provision_user, hash_token
+        from .embedding import Embedder
+        from .sqlite_backend import SqliteBackend
+        username = _getpass.getuser()
         token, created = provision_user(username)
         if created:
             print(f"✓ Created ~/.ragger/token for {username}")
         else:
             print(f"Token already exists for {username}")
-        # Register via daemon HTTP API (daemon owns the common DB)
+        # Register directly in DB
         try:
-            from .client import RaggerClient
-            client = RaggerClient(cfg["host"], cfg["port"], token)
-            if client.is_available():
-                result = client.register_user(username)
-                print(f"✓ Registered in database (user_id: {result.get('user_id')})")
+            reg_db = cfg["db_path"] if cfg["single_user"] else cfg["common_db_path"]
+            embedder = Embedder()
+            backend = SqliteBackend(embedder, db_path=reg_db)
+            token_hash = hash_token(token)
+            existing = backend.get_user_by_username(username)
+            if existing:
+                if existing["token_hash"] != token_hash:
+                    backend.update_user_token(username, token_hash)
+                print(f"✓ User exists in database (id: {existing['id']})")
             else:
-                print("Server not running. Will auto-register on first authenticated request.")
-        except Exception:
-            print("Server will auto-register on first authenticated request.")
+                user_id = backend.create_user(username, token_hash)
+                print(f"✓ Registered in database (user_id: {user_id})")
+            backend.close()
+        except Exception as e:
+            print(f"Warning: DB registration deferred ({e})")
 
     elif args.verb == "add-user":
         import os
-        from .auth import provision_user
+        from .auth import provision_user, hash_token
+        from .embedding import Embedder
+        from .sqlite_backend import SqliteBackend
         username = args.username
         is_admin = getattr(args, 'admin', False)
         try:
@@ -931,26 +942,37 @@ Examples:
             print(f"✓ Created token for {username}")
         else:
             print(f"Token already exists for {username}")
-        # Register via daemon
+        # Register directly in DB
         try:
-            from .client import RaggerClient
-            client = RaggerClient(cfg["host"], cfg["port"], token)
-            if client.is_available():
-                result = client.register_user(username, is_admin=is_admin)
-                print(f"✓ Registered in database (user_id: {result.get('user_id')})")
+            reg_db = cfg["db_path"] if cfg["single_user"] else cfg["common_db_path"]
+            embedder = Embedder()
+            backend = SqliteBackend(embedder, db_path=reg_db)
+            token_hash = hash_token(token)
+            existing = backend.get_user_by_username(username)
+            if existing:
+                if existing["token_hash"] != token_hash:
+                    backend.update_user_token(username, token_hash)
+                print(f"✓ User exists in database (id: {existing['id']})")
             else:
-                print("Server not running. Will auto-register on first authenticated request.")
-        except Exception:
-            print("Server will auto-register on first authenticated request.")
+                user_id = backend.create_user(username, token_hash, is_admin=is_admin)
+                print(f"✓ Registered in database (user_id: {user_id})")
+            backend.close()
+        except Exception as e:
+            print(f"Error: {e}")
 
     elif args.verb == "add-all":
         import os
         import pwd
-        from .auth import provision_user
+        from .auth import provision_user, hash_token
+        from .embedding import Embedder
+        from .sqlite_backend import SqliteBackend
         if os.getuid() != 0:
             print("Error: add-all requires sudo")
             return
-        from .client import RaggerClient
+        # Open DB directly for registration
+        reg_db = cfg["db_path"] if cfg["single_user"] else cfg["common_db_path"]
+        embedder = Embedder()
+        backend = SqliteBackend(embedder, db_path=reg_db)
         # Non-login shells — service accounts use these
         nologin_shells = {
             '/usr/bin/false', '/bin/false',
@@ -975,18 +997,22 @@ Examples:
                 token, created = provision_user(pw.pw_name, home_dir=pw.pw_dir)
                 status = "created" if created else "exists"
                 try:
-                    client = RaggerClient(cfg["host"], cfg["port"], token)
-                    if client.is_available():
-                        client.register_user(pw.pw_name)
+                    token_hash = hash_token(token)
+                    existing = backend.get_user_by_username(pw.pw_name)
+                    if existing:
+                        if existing["token_hash"] != token_hash:
+                            backend.update_user_token(pw.pw_name, token_hash)
                         status += ", registered"
                     else:
-                        status += ", pending registration"
-                except Exception:
-                    status += ", pending registration"
+                        backend.create_user(pw.pw_name, token_hash)
+                        status += ", registered"
+                except Exception as e:
+                    status += f", db error: {e}"
                 print(f"  {pw.pw_name}: {status}")
                 count += 1
             except Exception as e:
                 print(f"  {pw.pw_name}: error ({e})")
+        backend.close()
         print(f"✓ Processed {count} users")
 
     elif args.verb == "passwd":

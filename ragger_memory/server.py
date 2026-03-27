@@ -43,16 +43,21 @@ class RaggerHandler(BaseHTTPRequestHandler):
         Side effect: Sets self._rotation_needed and self._rotation_username
         if token rotation should happen after this request.
         """
-        if _server_token is None:
+        from .config import get_config
+        cfg = get_config()
+        single_user = cfg.get("single_user", True)
+        
+        # Single-user mode with no token configured: auth disabled
+        if single_user and _server_token is None:
             return {"id": None, "username": "anonymous", "is_admin": True}
         
         auth = self.headers.get("Authorization", "")
         if not auth.startswith("Bearer "):
-            return None
+            return None  # No auth header → reject
         
         token = auth[7:]
         
-        # First try DB lookup by token hash
+        # DB lookup by token hash (works for both modes)
         if _memory and hasattr(_memory, '_backend'):
             user = _memory._backend.get_user_by_token_hash(hash_token(token))
             if user:
@@ -60,9 +65,8 @@ class RaggerHandler(BaseHTTPRequestHandler):
                 self._check_token_rotation(user["username"])
                 return user
         
-        # Fallback: direct token comparison (pre-bootstrap requests)
-        # Auto-create user in DB so future lookups use the fast path
-        if validate_token(token, _server_token):
+        # Fallback: direct token comparison (single-user only, pre-bootstrap)
+        if single_user and _server_token and validate_token(token, _server_token):
             if _memory and hasattr(_memory, '_backend'):
                 import getpass
                 hashed = hash_token(token)
@@ -516,12 +520,9 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     global _memory, _server_token, _inference_client
     
-    # Ensure auth token exists (create if needed)
-    _server_token = ensure_token()
-    print(f"Auth: bearer token required (token: {token_path()})")
-    
     from .config import get_config
     cfg = get_config()
+    single_user = cfg.get("single_user", True)
     
     # Initialize inference client if configured
     if cfg.get("inference_api_url") or cfg.get("inference_endpoints"):
@@ -532,28 +533,32 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
             logger.warning(f"Inference client initialization failed: {e}")
             print("Inference: disabled (no valid configuration)")
     
-    if cfg.get("single_user", True):
+    if single_user:
+        # Single-user mode: ensure token, create default user if needed
+        _server_token = ensure_token()
+        print(f"Auth: bearer token required (token: {token_path()})")
         _memory = RaggerMemory()
+        
+        if _server_token and hasattr(_memory, '_backend'):
+            backend = _memory._backend
+            hashed = hash_token(_server_token)
+            existing = backend.get_user_by_token_hash(hashed)
+            if not existing:
+                import getpass
+                username = getpass.getuser()
+                user_id = backend.create_user(username, hashed, is_admin=True)
+                print(f"Created user: {username} (id={user_id})")
+            else:
+                print(f"User: {existing['username']} (id={existing['id']})")
     else:
-        # Multi-user: common DB (shared) + user DB (private)
+        # Multi-user mode: don't create tokens or default users.
+        # Users are provisioned via install.sh / add-user.
         import os
         common_path = os.path.expanduser(cfg["common_db_path"])
         user_path = os.path.expanduser(cfg["db_path"])
         _memory = RaggerMemory(uri=common_path, user_db_path=user_path)
         print(f"Multi-user mode: common={common_path}, user={user_path}")
-
-    # Bootstrap default user in single-user mode
-    if _server_token and hasattr(_memory, '_backend'):
-        backend = _memory._backend
-        hashed = hash_token(_server_token)
-        existing = backend.get_user_by_token_hash(hashed)
-        if not existing:
-            import getpass
-            username = getpass.getuser()
-            user_id = backend.create_user(username, hashed, is_admin=True)
-            print(f"Created default user: {username} (id={user_id})")
-        else:
-            print(f"User: {existing['username']} (id={existing['id']})")
+        print("Auth: via provisioned user tokens")
     
     server = HTTPServer((host, port), RaggerHandler)
     print(lang.MSG_SERVER_RUNNING.format(host=host, port=port))

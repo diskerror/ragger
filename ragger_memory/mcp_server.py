@@ -82,7 +82,16 @@ def run_mcp_server():
     Supports MCP protocol (initialize, tools/list, tools/call)
     and plain text search shortcuts for interactive use.
     """
-    memory = RaggerMemory()
+    from .config import get_config
+    cfg = get_config()
+    
+    if cfg["single_user"]:
+        memory = RaggerMemory()
+    else:
+        # Multi-user MCP: common DB for shared memories, user DB for private
+        import os
+        user_db = os.path.expanduser("~/.ragger/memories.db")
+        memory = RaggerMemory(uri=cfg["common_db_path"], user_db_path=user_db)
 
     def send_response(response: dict):
         """Send JSON-RPC response to stdout."""
