@@ -16,13 +16,18 @@ logger = logging.getLogger(__name__)
 # Dedicated HTTP log (request/response details)
 http_logger = logging.getLogger('ragger_memory.http')
 
-from .config import DEFAULT_HOST, DEFAULT_PORT
+from .config import DEFAULT_HOST, DEFAULT_PORT, get_config
 from . import lang
 
 # Module-level reference so the handler can access it
 _memory = None
 _server_token = None  # None = auth disabled (backward compat)
 _inference_client = None  # Initialized if inference config is present
+
+# Web session tokens: {token_str: {"username": ..., "expires": timestamp}}
+import time
+import secrets
+_web_sessions = {}
 
 
 class RaggerHandler(BaseHTTPRequestHandler):
@@ -53,9 +58,33 @@ class RaggerHandler(BaseHTTPRequestHandler):
         
         auth = self.headers.get("Authorization", "")
         if not auth.startswith("Bearer "):
-            return None  # No auth header → reject
+            # Check cookie for web session token
+            cookie = self.headers.get("Cookie", "")
+            for part in cookie.split(";"):
+                part = part.strip()
+                if part.startswith("ragger_token="):
+                    token = part[len("ragger_token="):]
+                    try:
+                        from urllib.parse import unquote
+                        token = unquote(token)
+                    except Exception:
+                        pass
+                    web_user = self._check_web_session(token)
+                    if web_user:
+                        return web_user
+                    # Also try as bearer token
+                    if _memory and hasattr(_memory, '_backend'):
+                        user = _memory._backend.get_user_by_token_hash(hash_token(token))
+                        if user:
+                            return user
+            return None  # No auth header or cookie → reject
         
         token = auth[7:]
+        
+        # Check web session tokens first
+        web_user = self._check_web_session(token)
+        if web_user:
+            return web_user
         
         # DB lookup by token hash (works for both modes)
         if _memory and hasattr(_memory, '_backend'):
@@ -155,6 +184,131 @@ class RaggerHandler(BaseHTTPRequestHandler):
             return {}
         return json.loads(self.rfile.read(length))
     
+    # --- MIME types for static file serving ---
+    MIME_TYPES = {
+        ".html": "text/html",
+        ".css":  "text/css",
+        ".js":   "application/javascript",
+        ".json": "application/json",
+        ".png":  "image/png",
+        ".jpg":  "image/jpeg",
+        ".svg":  "image/svg+xml",
+        ".ico":  "image/x-icon",
+        ".woff": "font/woff",
+        ".woff2": "font/woff2",
+    }
+
+    WEB_SESSION_TTL = 86400  # 24 hours
+
+    def _handle_login(self):
+        """Handle POST /auth/login — validate password, issue session token."""
+        try:
+            params = self._read_body()
+            username = params.get("username", "").strip()
+            password = params.get("password", "")
+
+            if not username or not password:
+                self._respond(400, {"error": "username and password required"})
+                return
+
+            # Look up user in database
+            backend = _memory._backend
+            user = backend.get_user_by_username(username)
+            if not user:
+                self._respond(401, {"error": "invalid credentials"})
+                return
+
+            # Verify password
+            stored_hash = backend.get_user_password(username)
+            if not stored_hash:
+                self._respond(401, {"error": "no password set — use 'ragger passwd' first"})
+                return
+
+            from .auth import verify_password
+            if not verify_password(password, stored_hash):
+                self._respond(401, {"error": "invalid credentials"})
+                return
+
+            # Generate session token
+            session_token = secrets.token_urlsafe(32)
+            _web_sessions[session_token] = {
+                "username": username,
+                "user_id": user.get("id"),
+                "is_admin": user.get("is_admin", False),
+                "expires": time.time() + self.WEB_SESSION_TTL
+            }
+
+            self._respond(200, {
+                "token": session_token,
+                "username": username,
+                "expires_in": self.WEB_SESSION_TTL
+            })
+
+        except Exception as e:
+            logger.error(f"Login error: {e}")
+            self._respond(500, {"error": "login failed"})
+
+    def _check_web_session(self, token: str) -> dict | None:
+        """Check if a token is a valid web session. Returns user dict or None."""
+        session = _web_sessions.get(token)
+        if not session:
+            return None
+        if time.time() > session["expires"]:
+            del _web_sessions[token]
+            return None
+        return {
+            "id": session["user_id"],
+            "username": session["username"],
+            "is_admin": session["is_admin"]
+        }
+
+    def _get_web_root(self) -> str:
+        """Resolve the web UI directory. INI 'web_root' overrides default."""
+        from .config import get_config
+        cfg = get_config()
+        custom = cfg.get("web_root", "")
+        if custom and os.path.isdir(custom):
+            return custom
+        # Default: web/ directory next to this package
+        return os.path.join(os.path.dirname(os.path.dirname(__file__)), "web")
+
+    def _serve_static(self):
+        """Serve static files from the web UI directory."""
+        web_root = self._get_web_root()
+        if not os.path.isdir(web_root):
+            self._respond(404, {"error": f"unknown endpoint: {self.path}"})
+            return
+
+        # Map / to /index.html
+        path = self.path.split("?")[0]  # strip query string
+        if path == "/":
+            path = "/index.html"
+
+        # Security: prevent directory traversal
+        safe_path = os.path.normpath(path.lstrip("/"))
+        if safe_path.startswith("..") or os.path.isabs(safe_path):
+            self._respond(403, {"error": "forbidden"})
+            return
+
+        file_path = os.path.join(web_root, safe_path)
+        if not os.path.isfile(file_path):
+            self._respond(404, {"error": f"unknown endpoint: {self.path}"})
+            return
+
+        ext = os.path.splitext(file_path)[1].lower()
+        content_type = self.MIME_TYPES.get(ext, "application/octet-stream")
+
+        try:
+            with open(file_path, "rb") as f:
+                body = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as e:
+            self._respond(500, {"error": str(e)})
+
     def _respond(self, code: int, data: dict):
         body = json.dumps(data).encode()
         self.send_response(code)
@@ -166,6 +320,10 @@ class RaggerHandler(BaseHTTPRequestHandler):
         self._perform_rotation()
     
     def do_POST(self):
+        # Login endpoint is public (no auth required)
+        if self.path == '/auth/login':
+            self._handle_login()
+            return
         user = self._check_auth()
         if not user:
             self._respond(401, {"error": "unauthorized"})
@@ -477,6 +635,15 @@ class RaggerHandler(BaseHTTPRequestHandler):
             from . import __version__
             self._respond(200, {"status": "ok", "version": __version__, "memories": _memory.count()})
             return
+        # Static web UI files are public (auth happens in the JS/API layer)
+        web_root = self._get_web_root()
+        if os.path.isdir(web_root):
+            path_clean = self.path.split("?")[0]
+            check_path = "/index.html" if path_clean == "/" else path_clean
+            safe = os.path.normpath(check_path.lstrip("/"))
+            if not safe.startswith("..") and os.path.isfile(os.path.join(web_root, safe)):
+                self._serve_static()
+                return
         user = self._check_auth()
         if not user:
             self._respond(401, {"error": "unauthorized"})
@@ -494,7 +661,8 @@ class RaggerHandler(BaseHTTPRequestHandler):
             model = backend.get_user_preferred_model(username)
             self._respond(200, {"model": model, "username": username})
         else:
-            self._respond(404, {"error": f"unknown endpoint: {self.path}"})
+            # Try serving static web UI files
+            self._serve_static()
     
     def log_message(self, format, *args):
         """Route HTTP logs through our logger instead of stderr"""
