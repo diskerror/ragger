@@ -23,6 +23,28 @@ from . import lang
 _memory = None
 _server_token = None  # None = auth disabled (backward compat)
 _inference_client = None  # Initialized if inference config is present
+_user_memories = {}  # username → RaggerMemory (per-user cache, multi-user mode)
+
+
+def _get_memory(username: str = None):
+    """
+    Get the appropriate RaggerMemory for a request.
+
+    Single-user mode: always returns _memory.
+    Multi-user mode: returns a user-scoped view that searches both
+    the common DB and the user's private DB (~username/.ragger/memories.db).
+    """
+    if not username or not _memory:
+        return _memory
+
+    cfg = get_config()
+    if cfg.get("single_user", True):
+        return _memory
+
+    if username not in _user_memories:
+        _user_memories[username] = _memory.for_user(username)
+
+    return _user_memories[username]
 
 # Web session tokens: {token_str: {"username": ..., "expires": timestamp}}
 import time
@@ -348,7 +370,8 @@ class RaggerHandler(BaseHTTPRequestHandler):
                 if 'source' not in metadata or not metadata['source']:
                     metadata['source'] = user.get('username', 'unknown')
                 common = params.get('common', False)
-                memory_id = _memory.store(text, metadata, common=common)
+                mem = _get_memory(user.get('username'))
+                memory_id = mem.store(text, metadata, common=common)
                 self._respond(200, {"id": memory_id, "status": "stored"})
             
             elif self.path == '/search':
@@ -359,7 +382,8 @@ class RaggerHandler(BaseHTTPRequestHandler):
                 limit = params.get('limit', 5)
                 min_score = params.get('min_score', 0.0)
                 collections = params.get('collections', None)
-                search_result = _memory.search(query, limit, min_score, collections)
+                mem = _get_memory(user.get('username'))
+                search_result = mem.search(query, limit, min_score, collections)
                 results = search_result["results"]
                 timing = search_result.get("timing", {})
                 # Convert datetime to string for JSON (if not already converted by backend)
@@ -370,14 +394,16 @@ class RaggerHandler(BaseHTTPRequestHandler):
                 self._respond(200, {"results": results, "timing": timing})
             
             elif self.path == '/count':
-                self._respond(200, {"count": _memory.count()})
+                mem = _get_memory(user.get('username'))
+                self._respond(200, {"count": mem.count()})
             
             elif self.path == '/delete_batch':
                 memory_ids = params.get('ids', [])
                 if not memory_ids:
                     self._respond(400, {"error": "ids required"})
                     return
-                count = _memory.delete_batch(memory_ids)
+                mem = _get_memory(user.get('username'))
+                count = mem.delete_batch(memory_ids)
                 self._respond(200, {"deleted": count})
             
             elif self.path == '/register':
@@ -428,7 +454,8 @@ class RaggerHandler(BaseHTTPRequestHandler):
                     self._respond(400, {"error": "metadata filter required"})
                     return
                 limit = params.get('limit', None)
-                results = _memory.search_by_metadata(metadata_filter, limit)
+                mem = _get_memory(user.get('username'))
+                results = mem.search_by_metadata(metadata_filter, limit)
                 self._respond(200, {"results": results, "count": len(results)})
             
             elif self.path == '/user/model':
@@ -457,12 +484,13 @@ class RaggerHandler(BaseHTTPRequestHandler):
                 username = user.get('username', 'anonymous')
                 session = get_or_create_session(session_id, username)
 
-                # Search memory for context
+                # Search memory for context (user-scoped in multi-user mode)
                 memory_context = ""
+                mem = _get_memory(username)
                 try:
                     cfg_obj = get_config()
                     max_results = cfg_obj.get("chat_max_memory_results", 5)
-                    search_result = _memory.search(message, max_results, 0.3)
+                    search_result = mem.search(message, max_results, 0.3)
                     chunks = [r['text'] for r in search_result.get('results', [])]
                     if chunks:
                         memory_context = "\n\n---\n\n".join(chunks)
@@ -530,7 +558,7 @@ class RaggerHandler(BaseHTTPRequestHandler):
                         store_turns = cfg.get("chat_store_turns", "true")
                         if store_turns and store_turns != "false":
                             try:
-                                _memory.store(
+                                mem.store(
                                     f"User: {message}\n\nAssistant: {response_text}",
                                     {
                                         "collection": "conversation",
@@ -626,7 +654,8 @@ class RaggerHandler(BaseHTTPRequestHandler):
             # DELETE /memory/<id> — delete by ID
             if self.path.startswith('/memory/'):
                 memory_id = self.path.split('/')[-1]
-                deleted = _memory.delete(memory_id)
+                mem = _get_memory(user.get('username'))
+                deleted = mem.delete(memory_id)
                 if deleted:
                     self._respond(200, {"status": "deleted", "id": memory_id})
                 else:
@@ -663,10 +692,11 @@ class RaggerHandler(BaseHTTPRequestHandler):
             self._respond(401, {"error": "unauthorized"})
             return
         if self.path == '/count':
-            response = {"count": _memory.count()}
-            if _memory.is_multi_db:
-                response["user"] = _memory._user_backend.count()
-                response["common"] = _memory._backend.count()
+            mem = _get_memory(user.get('username'))
+            response = {"count": mem.count()}
+            if mem.is_multi_db:
+                response["user"] = mem._user_backend.count()
+                response["common"] = mem._backend.count()
             self._respond(200, response)
         elif self.path == '/user/model':
             # GET /user/model — get preferred model for authenticated user
@@ -735,12 +765,13 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     else:
         # Multi-user mode: don't create tokens or default users.
         # Users are provisioned via install.sh / add-user.
+        # Common DB only at init; per-user DBs opened on demand via _get_memory().
         import os
         common_path = os.path.expanduser(cfg["common_db_path"])
-        user_path = os.path.expanduser(cfg["db_path"])
-        _memory = RaggerMemory(uri=common_path, user_db_path=user_path)
-        print(f"Multi-user mode: common={common_path}, user={user_path}")
+        _memory = RaggerMemory(uri=common_path)
+        print(f"Multi-user mode: common={common_path}")
         print("Auth: via provisioned user tokens")
+        print("User DBs: resolved per-user from ~username/.ragger/memories.db")
     
     server = HTTPServer((host, port), RaggerHandler)
 

@@ -55,6 +55,62 @@ class RaggerMemory:
                 lang.ERR_UNKNOWN_ENGINE.format(engine=self.engine)
             )
     
+    def for_user(self, username: str) -> "RaggerMemory":
+        """
+        Create a user-scoped view sharing this instance's embedder and common backend.
+
+        Resolves the user's home directory via pwd/NSFileManager and opens
+        their private DB at ~username/.ragger/memories.db.  Returns self
+        if no user DB exists (graceful fallback to common-only).
+        """
+        import os
+        from .sqlite_backend import SqliteBackend
+
+        # Resolve user's home directory
+        user_home = self._resolve_user_home(username)
+        if not user_home:
+            logger.warning(f"Cannot resolve home for user {username!r}, using common DB only")
+            return self
+
+        user_db = os.path.join(user_home, ".ragger", "memories.db")
+        if not os.path.exists(user_db):
+            logger.info(f"No user DB for {username!r} at {user_db}, using common DB only")
+            return self
+
+        # Build a new RaggerMemory sharing our embedder and common backend
+        inst = object.__new__(RaggerMemory)
+        inst.engine = self.engine
+        inst._backend = self._backend          # shared common DB
+        inst._user_backend = SqliteBackend(self._backend.embedder, user_db)
+        logger.info(f"Opened user DB for {username!r}: {user_db}")
+        return inst
+
+    @staticmethod
+    def _resolve_user_home(username: str) -> Optional[str]:
+        """Resolve a username to their home directory (macOS + Linux)."""
+        import os
+        import platform
+
+        # Try pwd first (works on both macOS and Linux)
+        try:
+            import pwd
+            pw = pwd.getpwnam(username)
+            if pw.pw_dir and os.path.isdir(pw.pw_dir):
+                return pw.pw_dir
+        except (KeyError, ImportError):
+            pass
+
+        # Fallback: common home base directories
+        if platform.system() == "Darwin":
+            candidate = f"/Users/{username}"
+        else:
+            candidate = f"/home/{username}"
+
+        if os.path.isdir(candidate):
+            return candidate
+
+        return None
+
     @property
     def is_multi_db(self) -> bool:
         """True if operating with separate common + user databases."""
