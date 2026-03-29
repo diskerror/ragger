@@ -914,7 +914,7 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         """Try to acquire housekeeping lock for a user. Returns True if acquired."""
         if username in _hk_locks:
             return True
-        lock_path = f"/tmp/ragger/{username}.lock"
+        lock_path = f"/tmp/ragger/housekeeping-{username}.lock"
         try:
             fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT, 0o644)
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

@@ -1449,7 +1449,7 @@ Examples:
         import signal
         import getpass
         username = getpass.getuser()
-        lock_path = f"/tmp/ragger/{username}.lock"
+        lock_path = f"/tmp/ragger/housekeeping-{username}.lock"
         pid = None
         for pid_path in [lock_path]:
             try:
