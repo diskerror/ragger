@@ -259,7 +259,7 @@ def run_mcp_server():
         max_age_hours = float(cfg.get("cleanup_max_age_hours", 336))
         while True:
             import time
-            time.sleep(60)
+            time.sleep(_hk_interval)
             if _is_http_server_running():
                 continue
             if max_age_hours <= 0:
@@ -283,8 +283,12 @@ def run_mcp_server():
             except Exception as e:
                 mcp_logger.warning(f"MCP housekeeping error: {e}")
 
+    _hk_interval = int(cfg.get("housekeeping_interval", 60))
+    if _hk_interval != 0 and _hk_interval < 10:
+        _hk_interval = 10
+
     mcp_username = getpass.getuser()
-    if not _is_http_server_running():
+    if _hk_interval > 0 and not _is_http_server_running():
         hk_thread = threading.Thread(
             target=_mcp_housekeeping_loop, args=(memory, mcp_username), daemon=True)
         hk_thread.start()

@@ -938,10 +938,14 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     # Register lock acquisition callback on _get_memory
     _get_memory._hk_acquire = _acquire_user_hk_lock
 
-    # Background housekeeping timer (every 60s + on SIGUSR1)
+    # Background housekeeping timer
+    _hk_interval = int(cfg.get("housekeeping_interval", 60))
+    if _hk_interval != 0 and _hk_interval < 10:
+        _hk_interval = 10
+
     def _housekeeping_loop():
         while True:
-            _housekeeping_requested.wait(timeout=60)
+            _housekeeping_requested.wait(timeout=_hk_interval)
             _housekeeping_requested.clear()
             try:
                 # Only clean DBs for users we hold locks for
@@ -962,8 +966,11 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
             except Exception as e:
                 logger.error(f"Housekeeping error: {e}")
 
-    _hk_thread = threading.Thread(target=_housekeeping_loop, daemon=True)
-    _hk_thread.start()
+    if _hk_interval == 0:
+        print("Housekeeping: disabled (interval = 0)")
+    else:
+        _hk_thread = threading.Thread(target=_housekeeping_loop, daemon=True)
+        _hk_thread.start()
 
     try:
         server.serve_forever()
