@@ -856,6 +856,22 @@ Examples:
     p_cleanup.add_argument("--user", type=str, default=None,
                            help="Clean a specific user's DB (default: current user)")
 
+    p_move = sub.add_parser("move", help="Move memories between user and common DBs")
+    p_move.add_argument("direction", choices=["to-common", "to-user"],
+                        help="Direction: to-common (user→common) or to-user (common→user)")
+    p_move.add_argument("--ids", type=str, default=None,
+                        help="Comma-separated memory IDs to move")
+    p_move.add_argument("--source", type=str, default=None,
+                        help="Move all records matching this source pattern (SQL LIKE)")
+    p_move.add_argument("--collection", type=str, default=None,
+                        help="Move all records in this collection")
+    p_move.add_argument("--category", type=str, default=None,
+                        help="Move all records with this category")
+    p_move.add_argument("--user", type=str, default=None,
+                        help="Target user (default: current user)")
+    p_move.add_argument("--dry-run", action="store_true",
+                        help="Show what would be moved without moving")
+
     p_housekeeping = sub.add_parser("housekeeping",
         help="Run housekeeping: summarize idle sessions + clean expired conversations (for cron)")
     p_housekeeping.add_argument("--port", type=int, default=None,
@@ -1257,6 +1273,102 @@ Examples:
         count = memory.rebuild_embeddings()
         print(f"✓ Embeddings rebuilt: {count} documents")
         memory.close()
+
+    elif args.verb == "move":
+        import sqlite3
+
+        # Resolve user DB
+        if args.user:
+            home = RaggerMemory._resolve_user_home(args.user)
+            if not home:
+                print(f"Error: cannot resolve home for user {args.user!r}")
+                return
+            user_db = str(Path(home) / ".ragger" / "memories.db")
+        else:
+            user_db = str(Path.home() / ".ragger" / "memories.db")
+
+        cfg = get_config()
+        common_db = cfg.get("common_db_path", "/var/ragger/memories.db")
+        common_db = str(Path(common_db).expanduser())
+
+        if not Path(user_db).exists():
+            print(f"Error: user DB not found at {user_db}")
+            return
+        if not Path(common_db).exists():
+            print(f"Error: common DB not found at {common_db}")
+            return
+
+        if args.direction == "to-common":
+            src_path, dst_path = user_db, common_db
+            label_from, label_to = "user", "common"
+        else:
+            src_path, dst_path = common_db, user_db
+            label_from, label_to = "common", "user"
+
+        src = sqlite3.connect(src_path)
+        dst = sqlite3.connect(dst_path)
+
+        # Build WHERE clause
+        conditions = []
+        params = []
+        if args.ids:
+            id_list = [i.strip() for i in args.ids.split(",")]
+            placeholders = ",".join("?" * len(id_list))
+            conditions.append(f"id IN ({placeholders})")
+            params.extend(id_list)
+        if args.source:
+            conditions.append("json_extract(metadata, '$.source') LIKE ?")
+            params.append(args.source)
+        if args.collection:
+            conditions.append("collection = ?")
+            params.append(args.collection)
+        if args.category:
+            conditions.append("category = ?")
+            params.append(args.category)
+
+        if not conditions:
+            print("Error: specify at least one filter (--ids, --source, --collection, --category)")
+            return
+
+        where = " AND ".join(conditions)
+
+        rows = src.execute(
+            f"SELECT id, text, embedding, metadata, timestamp, collection, category, tags "
+            f"FROM memories WHERE {where}", params
+        ).fetchall()
+
+        if not rows:
+            print(f"No matching records in {label_from} DB")
+            src.close()
+            dst.close()
+            return
+
+        if args.dry_run:
+            print(f"Would move {len(rows)} records from {label_from} → {label_to}:")
+            for r in rows[:10]:
+                print(f"  id={r[0]} {r[1][:70]}...")
+            if len(rows) > 10:
+                print(f"  ... and {len(rows) - 10} more")
+        else:
+            ids = []
+            for row in rows:
+                ids.append(row[0])
+                dst.execute(
+                    "INSERT INTO memories (text, embedding, metadata, timestamp, collection, category, tags) "
+                    "VALUES (?,?,?,?,?,?,?)", row[1:]
+                )
+            dst.commit()
+
+            batch = 500
+            for i in range(0, len(ids), batch):
+                chunk = ids[i:i+batch]
+                placeholders = ",".join("?" * len(chunk))
+                src.execute(f"DELETE FROM memories WHERE id IN ({placeholders})", chunk)
+            src.commit()
+            print(f"Moved {len(rows)} records from {label_from} → {label_to}")
+
+        src.close()
+        dst.close()
 
     elif args.verb == "cleanup":
         from datetime import datetime, timezone, timedelta
