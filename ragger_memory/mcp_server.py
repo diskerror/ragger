@@ -236,23 +236,22 @@ def run_mcp_server():
 
     # Start housekeeping thread if HTTP server isn't handling it
     import getpass
-    import fcntl
     import threading
 
-    def _is_housekeeping_locked(username):
-        lock_path = f"/tmp/ragger-housekeeping-{username}.lock"
-        try:
-            fd = os.open(lock_path, os.O_RDONLY)
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                fcntl.flock(fd, fcntl.LOCK_UN)
-                os.close(fd)
-                return False  # we got it, so nobody holds it
-            except (BlockingIOError, OSError):
-                os.close(fd)
-                return True  # someone holds it
-        except FileNotFoundError:
-            return False  # no lock file
+    def _is_http_server_running():
+        """Check if any ragger HTTP server is running (PID file with live process)."""
+        import glob
+        import signal as _sig
+        for pattern in ["/var/run/ragger-*.pid", "/tmp/ragger-*.pid"]:
+            for pid_path in glob.glob(pattern):
+                try:
+                    with open(pid_path) as f:
+                        pid = int(f.read().strip())
+                    os.kill(pid, 0)  # check if alive
+                    return True
+                except (ValueError, ProcessLookupError, PermissionError, FileNotFoundError):
+                    continue
+        return False
 
     def _mcp_housekeeping_loop(mem, username):
         from datetime import datetime, timezone, timedelta
@@ -261,7 +260,7 @@ def run_mcp_server():
         while True:
             import time
             time.sleep(60)
-            if _is_housekeeping_locked(username):
+            if _is_http_server_running():
                 continue
             if max_age_hours <= 0:
                 continue
@@ -285,7 +284,7 @@ def run_mcp_server():
                 mcp_logger.warning(f"MCP housekeeping error: {e}")
 
     mcp_username = getpass.getuser()
-    if not _is_housekeeping_locked(mcp_username):
+    if not _is_http_server_running():
         hk_thread = threading.Thread(
             target=_mcp_housekeeping_loop, args=(memory, mcp_username), daemon=True)
         hk_thread.start()
