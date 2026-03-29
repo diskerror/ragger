@@ -892,7 +892,7 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     # Write PID file (per-port)
     os.makedirs("/tmp/ragger", exist_ok=True)
-    pid_file = f"/tmp/ragger/{port}.pid"
+    pid_file = f"/tmp/ragger/server-{port}.pid"
     with open(pid_file, "w") as f:
         f.write(str(os.getpid()))
     print(f"PID file: {pid_file}")
@@ -914,7 +914,7 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         """Try to acquire housekeeping lock for a user. Returns True if acquired."""
         if username in _hk_locks:
             return True
-        lock_path = f"/tmp/ragger/housekeeping-{username}.lock"
+        lock_path = f"/tmp/ragger/{username}.lock"
         try:
             fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT, 0o644)
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

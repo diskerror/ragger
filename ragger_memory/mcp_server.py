@@ -242,7 +242,7 @@ def run_mcp_server():
         """Check if any ragger HTTP server is running (PID file with live process)."""
         import glob
         import signal as _sig
-        for pattern in ["/tmp/ragger/*.pid"]:
+        for pattern in ["/tmp/ragger/server-*.pid"]:
             for pid_path in glob.glob(pattern):
                 try:
                     with open(pid_path) as f:
