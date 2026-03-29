@@ -887,20 +887,21 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     if _inference_client and _inference_client.model:
         _preload_local_model(_inference_client.model)
 
-    # Write PID file
-    pid_file = "/var/run/ragger.pid"
+    # Write PID file (per-port)
+    pid_file = f"/var/run/ragger-{port}.pid"
     try:
         with open(pid_file, "w") as f:
             f.write(str(os.getpid()))
         print(f"PID file: {pid_file}")
     except PermissionError:
-        pid_file = "/tmp/ragger.pid"
+        pid_file = f"/tmp/ragger-{port}.pid"
         with open(pid_file, "w") as f:
             f.write(str(os.getpid()))
         print(f"PID file: {pid_file}")
 
     # SIGUSR1 handler for housekeeping
     import signal as _signal
+    import fcntl
     _housekeeping_requested = threading.Event()
 
     def _sigusr1_handler(signum, frame):
@@ -908,32 +909,53 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
 
     _signal.signal(_signal.SIGUSR1, _sigusr1_handler)
 
-    # Background housekeeping timer (every 60s + on SIGUSR1)
-    def _housekeeping_loop():
-        while True:
-            # Wait up to 60s, or until signaled
-            _housekeeping_requested.wait(timeout=60)
-            _housekeeping_requested.clear()
-            try:
-                user_db_paths = set()
-                for um in _user_memories.values():
-                    if um and um._user_backend and hasattr(um._user_backend, 'db_path'):
-                        user_db_paths.add(um._user_backend.db_path)
-                results = run_housekeeping(
-                    memory=_memory,
-                    inference_client=_inference_client,
-                    memory_resolver=_get_memory,
-                    user_db_paths=list(user_db_paths),
-                )
-                total = results.get("sessions_expired", 0) + results.get("conversations_cleaned", 0)
-                if total > 0:
-                    logger.info(f"Housekeeping: {results['sessions_expired']} sessions expired, "
-                              f"{results['conversations_cleaned']} conversations cleaned")
-            except Exception as e:
-                logger.error(f"Housekeeping error: {e}")
+    # Acquire housekeeping lock (only one instance runs housekeeping)
+    _hk_lock_fd = None
+    _hk_owns_lock = False
+    for lock_path in ["/var/run/ragger-housekeeping.lock", "/tmp/ragger-housekeeping.lock"]:
+        try:
+            _hk_lock_fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT, 0o644)
+            fcntl.flock(_hk_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.ftruncate(_hk_lock_fd, 0)
+            os.write(_hk_lock_fd, str(os.getpid()).encode())
+            _hk_owns_lock = True
+            print(f"Housekeeping owner: this instance (lock: {lock_path})")
+            break
+        except (PermissionError, OSError):
+            if _hk_lock_fd is not None:
+                os.close(_hk_lock_fd)
+                _hk_lock_fd = None
+            continue
 
-    _hk_thread = threading.Thread(target=_housekeeping_loop, daemon=True)
-    _hk_thread.start()
+    if not _hk_owns_lock:
+        print("Housekeeping: another instance owns the lock, skipping timer")
+
+    # Background housekeeping timer (every 60s + on SIGUSR1)
+    if _hk_owns_lock:
+        def _housekeeping_loop():
+            while True:
+                _housekeeping_requested.wait(timeout=60)
+                _housekeeping_requested.clear()
+                try:
+                    user_db_paths = set()
+                    for um in _user_memories.values():
+                        if um and um._user_backend and hasattr(um._user_backend, 'db_path'):
+                            user_db_paths.add(um._user_backend.db_path)
+                    results = run_housekeeping(
+                        memory=_memory,
+                        inference_client=_inference_client,
+                        memory_resolver=_get_memory,
+                        user_db_paths=list(user_db_paths),
+                    )
+                    total = results.get("sessions_expired", 0) + results.get("conversations_cleaned", 0)
+                    if total > 0:
+                        logger.info(f"Housekeeping: {results['sessions_expired']} sessions expired, "
+                                  f"{results['conversations_cleaned']} conversations cleaned")
+                except Exception as e:
+                    logger.error(f"Housekeeping error: {e}")
+
+        _hk_thread = threading.Thread(target=_housekeeping_loop, daemon=True)
+        _hk_thread.start()
 
     try:
         server.serve_forever()
@@ -946,3 +968,9 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
             os.remove(pid_file)
         except OSError:
             pass
+        if _hk_lock_fd is not None:
+            try:
+                fcntl.flock(_hk_lock_fd, fcntl.LOCK_UN)
+                os.close(_hk_lock_fd)
+            except OSError:
+                pass

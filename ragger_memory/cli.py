@@ -1448,7 +1448,7 @@ Examples:
         # Send SIGUSR1 to running daemon
         import signal
         pid = None
-        for pid_path in ["/var/run/ragger.pid", "/tmp/ragger.pid"]:
+        for pid_path in ["/var/run/ragger-housekeeping.lock", "/tmp/ragger-housekeeping.lock"]:
             try:
                 with open(pid_path) as f:
                     pid = int(f.read().strip())
@@ -1457,7 +1457,7 @@ Examples:
                 continue
 
         if not pid:
-            print("Error: no running daemon found (no PID file)")
+            print("Error: no running daemon found (no housekeeping lock file)")
             return
 
         try:
