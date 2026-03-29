@@ -146,16 +146,28 @@ def provision_user(username: str, home_dir: str | None = None) -> tuple[str, boo
     with open(path, "w") as f:
         f.write(token + "\n")
 
-    # Permissions: 0640 (owner rw + group read for daemon)
-    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP)
+    # Permissions: 0660 (owner+group rw for daemon access)
+    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP)
 
-    # Set ownership to the target user if we're running as root
+    # Set ownership: user owns, ragger group for daemon access
     if os.getuid() == 0:
         import pwd
+        import grp as _grp
         try:
             pw = pwd.getpwnam(username)
-            os.chown(ragger_dir, pw.pw_uid, pw.pw_gid)
-            os.chown(path, pw.pw_uid, pw.pw_gid)
+            try:
+                rg = _grp.getgrnam("ragger")
+                gid = rg.gr_gid
+            except KeyError:
+                gid = pw.pw_gid
+            os.chown(ragger_dir, pw.pw_uid, gid)
+            os.chmod(ragger_dir, 0o770)
+            os.chown(path, pw.pw_uid, gid)
+            # Also fix memories.db if it exists
+            db_path = os.path.join(ragger_dir, "memories.db")
+            if os.path.exists(db_path):
+                os.chown(db_path, pw.pw_uid, gid)
+                os.chmod(db_path, 0o660)
         except KeyError:
             pass  # user doesn't exist in passwd — skip chown
 
