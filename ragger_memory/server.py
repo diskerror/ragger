@@ -13,6 +13,20 @@ from .inference import InferenceClient
 from .chat_sessions import get_or_create_session, load_workspace_files, cleanup_expired_sessions
 
 logger = logging.getLogger(__name__)
+
+# Timelapse file — touched on user activity, mtime signals idle duration
+_TIMELAPSE_PATH = "/var/ragger/timelapse"
+
+
+def _touch_timelapse():
+    """Update timelapse file mtime to mark user activity."""
+    try:
+        with open(_TIMELAPSE_PATH, 'a'):
+            os.utime(_TIMELAPSE_PATH, None)
+    except OSError:
+        pass  # non-fatal — file may not be writable in single-user mode
+
+
 # Dedicated HTTP log (request/response details)
 http_logger = logging.getLogger('ragger_memory.http')
 
@@ -358,6 +372,7 @@ class RaggerHandler(BaseHTTPRequestHandler):
             params = self._read_body()
             
             if self.path == '/store':
+                _touch_timelapse()
                 text = params.get('text')
                 if not text:
                     self._respond(400, {"error": "text required"})
@@ -471,6 +486,7 @@ class RaggerHandler(BaseHTTPRequestHandler):
             
             elif self.path == '/chat':
                 # Memory-augmented chat with SSE streaming
+                _touch_timelapse()
                 if not _inference_client:
                     self._respond(503, {"error": "inference not configured"})
                     return

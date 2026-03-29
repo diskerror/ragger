@@ -846,6 +846,16 @@ Examples:
                            help="Skip confirmation prompt")
 
     # --- update-model ---
+    p_cleanup = sub.add_parser("cleanup", help="Delete old conversation entries by age")
+    p_cleanup.add_argument("--max-age", type=float, default=336.0,
+                           help="Max age in hours (default: 336 = 2 weeks). Supports fractions (e.g. 3.75)")
+    p_cleanup.add_argument("--collection", type=str, default="conversation",
+                           help="Collection to clean (default: conversation)")
+    p_cleanup.add_argument("--dry-run", action="store_true",
+                           help="Show what would be deleted without deleting")
+    p_cleanup.add_argument("--user", type=str, default=None,
+                           help="Clean a specific user's DB (default: current user)")
+
     sub.add_parser("update-model", help="Download/update embedding model")
 
     # --- help ---
@@ -1240,6 +1250,59 @@ Examples:
         count = memory.rebuild_embeddings()
         print(f"✓ Embeddings rebuilt: {count} documents")
         memory.close()
+
+    elif args.verb == "cleanup":
+        from datetime import datetime, timezone, timedelta
+        import sqlite3
+
+        max_age_hours = args.max_age
+        collection = args.collection
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+        cutoff_str = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # Resolve DB path
+        if args.user:
+            home = RaggerMemory._resolve_user_home(args.user)
+            if not home:
+                print(f"Error: cannot resolve home for user {args.user!r}")
+                return
+            db_path = str(Path(home) / ".ragger" / "memories.db")
+        else:
+            db_path = str(Path.home() / ".ragger" / "memories.db")
+
+        if not Path(db_path).exists():
+            print(f"Error: no database at {db_path}")
+            return
+
+        conn = sqlite3.connect(db_path)
+        count = conn.execute(
+            "SELECT count(*) FROM memories WHERE collection = ? AND timestamp < ?",
+            (collection, cutoff_str)
+        ).fetchone()[0]
+
+        if count == 0:
+            print(f"No {collection} entries older than {max_age_hours}h")
+            conn.close()
+            return
+
+        if args.dry_run:
+            print(f"Would delete {count} {collection} entries older than {max_age_hours}h (cutoff: {cutoff_str})")
+            # Show a few examples
+            samples = conn.execute(
+                "SELECT id, substr(text, 1, 80), timestamp FROM memories WHERE collection = ? AND timestamp < ? ORDER BY timestamp LIMIT 5",
+                (collection, cutoff_str)
+            ).fetchall()
+            for s in samples:
+                print(f"  id={s[0]} ts={s[2]} {s[1]}...")
+        else:
+            conn.execute(
+                "DELETE FROM memories WHERE collection = ? AND timestamp < ?",
+                (collection, cutoff_str)
+            )
+            conn.commit()
+            print(f"Deleted {count} {collection} entries older than {max_age_hours}h")
+
+        conn.close()
 
     elif args.verb == "export":
         if args.mode == "docs":
