@@ -322,6 +322,13 @@ def load_config(path: str) -> dict:
         "port": getint("server", "port", 8432),
         "single_user": getbool("server", "single_user", True),
 
+        # TLS
+        "tls_cert": get("tls", "cert", get("server", "tls_cert", "")),
+        "tls_key": get("tls", "key", get("server", "tls_key", "")),
+
+        # Web UI
+        "web_root": get("web", "root", get("server", "web_root", "")),
+
         # Auth
         "token_rotation_minutes": getint("auth", "token_rotation_minutes", 1440),
 

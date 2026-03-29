@@ -267,10 +267,14 @@ class RaggerHandler(BaseHTTPRequestHandler):
         from .config import get_config
         cfg = get_config()
         custom = cfg.get("web_root", "")
-        if custom and os.path.isdir(custom):
-            return custom
-        # Default: web/ directory next to this package
-        return os.path.join(os.path.dirname(os.path.dirname(__file__)), "web")
+        if custom and os.path.isdir(os.path.expanduser(custom)):
+            return os.path.expanduser(custom)
+        # Check standard locations
+        for d in ["/var/ragger/www",
+                  os.path.join(os.path.dirname(os.path.dirname(__file__)), "web")]:
+            if os.path.isdir(d):
+                return d
+        return ""
 
     def _serve_static(self):
         """Serve static files from the web UI directory."""
@@ -739,6 +743,26 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         print("Auth: via provisioned user tokens")
     
     server = HTTPServer((host, port), RaggerHandler)
+
+    # TLS support
+    tls_cert = cfg.get("tls_cert", "")
+    tls_key = cfg.get("tls_key", "")
+    if tls_cert and tls_key:
+        cert_path = os.path.expanduser(tls_cert)
+        key_path = os.path.expanduser(tls_key)
+        if os.path.exists(cert_path) and os.path.exists(key_path):
+            import ssl
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(cert_path, key_path)
+            server.socket = ctx.wrap_socket(server.socket, server_side=True)
+            print(f"TLS enabled: {cert_path}")
+        else:
+            print("WARNING: TLS certificates not found — starting without encryption")
+            if not os.path.exists(cert_path):
+                print(f"  Missing: {cert_path}")
+            if not os.path.exists(key_path):
+                print(f"  Missing: {key_path}")
+
     print(lang.MSG_SERVER_RUNNING.format(host=host, port=port))
     print(lang.MSG_SERVER_ENDPOINTS)
     print(f"  POST   /store               - {{\"text\": \"...\", \"metadata\": {{...}}}}")
@@ -754,7 +778,15 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     print(f"  GET    /user/model          - get preferred model")
     print(f"  DELETE /user/model          - clear preferred model")
     print(f"  GET    /health              - health check")
+    print(f"\n  Health check: curl http://{host}:{port}/health")
     print(lang.MSG_SERVER_STOP)
+
+    # Warmup: pre-load embedding cache
+    try:
+        _memory.search("warmup", 1, 0.0)
+        print(f"Warmup: embedding cache loaded ({_memory.count()} memories)")
+    except Exception as e:
+        print(f"Warmup: {e}")
     
     try:
         server.serve_forever()
