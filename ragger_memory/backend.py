@@ -150,37 +150,94 @@ class MemoryBackend(ABC):
                 normalized[key] = value
         return normalized
     
-    def store(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> str:
+    # Dimensions must match the embedding model (MiniLM-L6 = 384)
+    EMBEDDING_DIMS = 384
+
+    def store(self, text: str, metadata: Optional[Dict[str, Any]] = None,
+              defer_embedding: bool = False) -> str:
         """
-        Encode and store a memory
-        
+        Encode and store a memory.
+
         Args:
             text: The memory text
             metadata: Optional metadata
-        
+            defer_embedding: If True, store with a zero-vector and
+                             compute the real embedding asynchronously.
+                             The record is immediately searchable by BM25
+                             (keywords) but not by vector similarity until
+                             the embedding is backfilled.
+
         Returns:
             Memory ID (str)
         """
         try:
             text = self._normalize_paths(text)
             meta = self._normalize_metadata(metadata or {})
-            
+
             # Ensure every record has a collection
             if 'collection' not in meta:
                 meta['collection'] = DEFAULT_COLLECTION
-            
-            embedding = self.embedder.encode(text).tolist()
+
             timestamp = datetime.now(timezone.utc)
-            
-            memory_id = self.store_raw(text, embedding, meta, timestamp)
-            self._invalidate_cache()
-            
-            logger.info(lang.MSG_STORED_MEMORY.format(id=memory_id))
+
+            if defer_embedding:
+                # Zero-vector placeholder — backfilled by _embed_deferred()
+                embedding = [0.0] * self.EMBEDDING_DIMS
+                memory_id = self.store_raw(text, embedding, meta, timestamp)
+                self._invalidate_cache()
+                logger.info(f"Stored memory {memory_id} (embedding deferred)")
+                # Kick off background embedding
+                self._embed_deferred(int(memory_id), text)
+            else:
+                embedding = self.embedder.encode(text).tolist()
+                memory_id = self.store_raw(text, embedding, meta, timestamp)
+                self._invalidate_cache()
+                logger.info(lang.MSG_STORED_MEMORY.format(id=memory_id))
+
             return memory_id
-            
+
         except Exception as e:
             logger.error(lang.ERR_STORE_FAILED.format(error=e))
             raise
+
+    def _embed_deferred(self, memory_id: int, text: str):
+        """Compute embedding in a background thread and update the record."""
+        import threading
+
+        # Capture the DB path — the thread opens its own connection
+        db_path = self._get_db_path()
+
+        def _do_embed():
+            try:
+                embedding = self.embedder.encode(text)
+                embedding_blob = np.array(embedding, dtype=np.float32).tobytes()
+                self._update_embedding_by_path(db_path, memory_id, embedding_blob)
+                self._invalidate_cache()
+                logger.info(f"Deferred embedding complete for memory {memory_id}")
+            except Exception as e:
+                logger.warning(f"Deferred embedding failed for {memory_id}: {e}")
+
+        threading.Thread(target=_do_embed, daemon=True).start()
+
+    @abstractmethod
+    def _get_db_path(self) -> str:
+        """Return the database file path (for thread-safe deferred operations)."""
+        ...
+
+    @staticmethod
+    def _update_embedding_by_path(db_path: str, memory_id: int, embedding_blob: bytes):
+        """Update embedding using a fresh connection (thread-safe)."""
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        conn.execute("UPDATE memories SET embedding = ? WHERE id = ?",
+                     (embedding_blob, memory_id))
+        conn.commit()
+        conn.close()
+
+    @abstractmethod
+    def _update_embedding(self, memory_id: int, embedding_blob: bytes):
+        """Update the embedding blob for an existing record."""
+        ...
     
     def search(
         self,

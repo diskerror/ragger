@@ -387,7 +387,8 @@ class RaggerHandler(BaseHTTPRequestHandler):
                     metadata['source'] = user.get('username', 'unknown')
                 common = params.get('common', False)
                 mem = _get_memory(user.get('username'))
-                memory_id = mem.store(text, metadata, common=common)
+                defer = params.get('defer_embedding', False)
+                memory_id = mem.store(text, metadata, common=common, defer_embedding=defer)
                 self._respond(200, {"id": memory_id, "status": "stored"})
             
             elif self.path == '/search':
@@ -581,7 +582,8 @@ class RaggerHandler(BaseHTTPRequestHandler):
                                         "collection": "conversation",
                                         "category": "chat-turn",
                                         "source": f"chat-http-{username}",
-                                    }
+                                    },
+                                    defer_embedding=True,
                                 )
                             except Exception as e:
                                 logger.warning(f"Turn storage failed: {e}")

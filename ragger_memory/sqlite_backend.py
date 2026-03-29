@@ -419,6 +419,18 @@ class SqliteBackend(MemoryBackend):
             logger.error(f"Failed to store in SQLite: {e}")
             raise
     
+    def _get_db_path(self) -> str:
+        """Return the database file path."""
+        return str(self.db_path)
+
+    def _update_embedding(self, memory_id: int, embedding_blob: bytes):
+        """Update the embedding blob for an existing record."""
+        self.conn.execute(
+            f"UPDATE {self._memories_table} SET embedding = ? WHERE id = ?",
+            (embedding_blob, memory_id)
+        )
+        self.conn.commit()
+
     def _index_bm25_tokens(self, memory_id: int, text: str):
         """Tokenize text and store term frequencies in bm25_index table."""
         tokens = tokenize(text)

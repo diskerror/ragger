@@ -117,7 +117,7 @@ class RaggerMemory:
         return self._user_backend is not None
     
     def store(self, text: str, metadata: Optional[Dict[str, Any]] = None,
-              common: bool = False) -> str:
+              common: bool = False, defer_embedding: bool = False) -> str:
         """
         Store a memory with vector embedding.
         
@@ -148,8 +148,8 @@ class RaggerMemory:
             metadata["tags"] = tags
         
         if self._user_backend and not common:
-            return self._user_backend.store(text, metadata)
-        return self._backend.store(text, metadata)
+            return self._user_backend.store(text, metadata, defer_embedding=defer_embedding)
+        return self._backend.store(text, metadata, defer_embedding=defer_embedding)
     
     def search(
         self,
