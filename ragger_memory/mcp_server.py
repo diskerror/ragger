@@ -234,6 +234,62 @@ def run_mcp_server():
         except Exception as e:
             print(f"Error: {e}", flush=True)
 
+    # Start housekeeping thread if HTTP server isn't handling it
+    import getpass
+    import fcntl
+    import threading
+
+    def _is_housekeeping_locked(username):
+        lock_path = f"/tmp/ragger-housekeeping-{username}.lock"
+        try:
+            fd = os.open(lock_path, os.O_RDONLY)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(fd, fcntl.LOCK_UN)
+                os.close(fd)
+                return False  # we got it, so nobody holds it
+            except (BlockingIOError, OSError):
+                os.close(fd)
+                return True  # someone holds it
+        except FileNotFoundError:
+            return False  # no lock file
+
+    def _mcp_housekeeping_loop(mem, username):
+        from datetime import datetime, timezone, timedelta
+        import sqlite3
+        max_age_hours = float(cfg.get("cleanup_max_age_hours", 336))
+        while True:
+            import time
+            time.sleep(60)
+            if _is_housekeeping_locked(username):
+                continue
+            if max_age_hours <= 0:
+                continue
+            # Clean expired conversations from user DB
+            be = mem._user_backend or mem._backend
+            db_path = be.db_path
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+            cutoff_str = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+            try:
+                conn = sqlite3.connect(db_path)
+                cursor = conn.execute(
+                    "DELETE FROM memories WHERE collection = 'conversation' AND timestamp < ?",
+                    (cutoff_str,)
+                )
+                deleted = cursor.rowcount
+                conn.commit()
+                conn.close()
+                if deleted > 0:
+                    mcp_logger.info(f"MCP housekeeping: cleaned {deleted} expired conversations")
+            except Exception as e:
+                mcp_logger.warning(f"MCP housekeeping error: {e}")
+
+    mcp_username = getpass.getuser()
+    if not _is_housekeeping_locked(mcp_username):
+        hk_thread = threading.Thread(
+            target=_mcp_housekeeping_loop, args=(memory, mcp_username), daemon=True)
+        hk_thread.start()
+
     # Main loop: read requests from stdin
     mcp_logger.info("MCP server started, waiting for requests...")
     for line in sys.stdin:
