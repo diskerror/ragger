@@ -10,7 +10,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from .memory import RaggerMemory
 from .auth import load_token, validate_token, hash_token, ensure_token, token_path
 from .inference import InferenceClient
-from .chat_sessions import get_or_create_session, load_workspace_files, cleanup_expired_sessions
+from .chat_sessions import (get_or_create_session, load_workspace_files,
+                             cleanup_expired_sessions, run_housekeeping)
 
 logger = logging.getLogger(__name__)
 
@@ -589,7 +590,7 @@ class RaggerHandler(BaseHTTPRequestHandler):
                     import threading
                     threading.Thread(
                         target=cleanup_expired_sessions,
-                        args=(_memory, _inference_client),
+                        args=(_memory, _inference_client, _get_memory),
                         daemon=True
                     ).start()
 
@@ -654,6 +655,24 @@ class RaggerHandler(BaseHTTPRequestHandler):
                     logger.error(f"Inference request failed: {e}")
                     self._respond(500, {"error": str(e)})
             
+            elif self.path == '/housekeeping':
+                # Housekeeping: summarize idle sessions + clean expired conversations.
+                # Designed to be called by cron every ~10 minutes.
+                # Collects all known user DB paths from the per-user cache.
+                user_db_paths = set()
+                for um in _user_memories.values():
+                    if um._user_backend and hasattr(um._user_backend, 'db_path'):
+                        user_db_paths.add(um._user_backend.db_path)
+
+                results = run_housekeeping(
+                    memory=_memory,
+                    inference_client=_inference_client,
+                    memory_resolver=_get_memory,
+                    user_db_paths=list(user_db_paths),
+                )
+                _touch_timelapse()
+                self._respond(200, results)
+
             else:
                 self._respond(404, {"error": f"unknown endpoint: {self.path}"})
         

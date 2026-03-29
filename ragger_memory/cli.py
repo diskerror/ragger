@@ -856,6 +856,13 @@ Examples:
     p_cleanup.add_argument("--user", type=str, default=None,
                            help="Clean a specific user's DB (default: current user)")
 
+    p_housekeeping = sub.add_parser("housekeeping",
+        help="Run housekeeping: summarize idle sessions + clean expired conversations (for cron)")
+    p_housekeeping.add_argument("--port", type=int, default=None,
+                                help="Server port (default: from config)")
+    p_housekeeping.add_argument("--host", type=str, default="localhost",
+                                help="Server host (default: localhost)")
+
     sub.add_parser("update-model", help="Download/update embedding model")
 
     # --- help ---
@@ -1303,6 +1310,40 @@ Examples:
             print(f"Deleted {count} {collection} entries older than {max_age_hours}h")
 
         conn.close()
+
+    elif args.verb == "housekeeping":
+        # Call the running server's /housekeeping endpoint
+        cfg = get_config()
+        port = args.port or cfg.get("port", 8432)
+        host = args.host
+        token = load_token()
+        if not token:
+            print("Error: no auth token found. Run 'ragger add-self' first.")
+            return
+
+        import urllib.request
+        import urllib.error
+        url = f"http://{host}:{port}/housekeeping"
+        req = urllib.request.Request(
+            url,
+            data=b"{}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                import json as _json
+                result = _json.loads(resp.read())
+                print(f"Housekeeping complete:")
+                print(f"  Sessions summarized: {result.get('sessions_expired', 0)}")
+                print(f"  Conversations cleaned: {result.get('conversations_cleaned', 0)}")
+        except urllib.error.URLError as e:
+            print(f"Error: cannot reach server at {url}: {e}")
+        except Exception as e:
+            print(f"Error: {e}")
 
     elif args.verb == "export":
         if args.mode == "docs":

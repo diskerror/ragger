@@ -157,8 +157,15 @@ def load_workspace_files() -> str:
     return "\n\n---\n\n".join(parts) if parts else ""
 
 
-def cleanup_expired_sessions(memory=None, inference_client=None):
-    """Remove expired sessions, optionally summarizing their turns."""
+def cleanup_expired_sessions(memory=None, inference_client=None, memory_resolver=None):
+    """
+    Remove expired sessions, optionally summarizing their turns.
+
+    Args:
+        memory: Default RaggerMemory (used if memory_resolver is None)
+        inference_client: InferenceClient for summarization
+        memory_resolver: callable(username) → RaggerMemory (per-user)
+    """
     cfg = get_config()
     pause_minutes = cfg.get("chat_pause_minutes", 10)
 
@@ -170,9 +177,72 @@ def cleanup_expired_sessions(memory=None, inference_client=None):
 
         for sid in expired:
             session = _sessions.pop(sid)
-            if session.unsummarized_turns and memory and inference_client:
-                # Background summarize
-                _bg_summarize(session, memory, inference_client)
+            if session.unsummarized_turns and inference_client:
+                # Resolve per-user memory
+                user_mem = memory
+                if memory_resolver:
+                    user_mem = memory_resolver(session.username)
+                if user_mem:
+                    _bg_summarize(session, user_mem, inference_client)
+
+
+def run_housekeeping(memory=None, inference_client=None, memory_resolver=None,
+                     user_db_paths=None):
+    """
+    Full housekeeping pass — called by cron via /housekeeping endpoint.
+
+    1. Summarize idle sessions (pause_minutes threshold)
+    2. Delete expired conversation entries from all known user DBs
+
+    Args:
+        memory: Common RaggerMemory
+        inference_client: For summarization
+        memory_resolver: callable(username) → RaggerMemory
+        user_db_paths: list of DB file paths to clean (server provides these)
+
+    Returns dict with results.
+    """
+    from datetime import datetime, timezone, timedelta
+    import sqlite3
+
+    results = {"sessions_expired": 0, "conversations_cleaned": 0}
+    cfg = get_config()
+
+    # 1. Summarize idle sessions
+    with _sessions_lock:
+        pause_minutes = cfg.get("chat_pause_minutes", 10)
+        idle_count = sum(1 for s in _sessions.values()
+                        if s.idle_seconds() > pause_minutes * 60
+                        and s.unsummarized_turns)
+    results["sessions_expired"] = idle_count
+
+    cleanup_expired_sessions(memory, inference_client, memory_resolver)
+
+    # 2. Delete old conversation entries
+    max_age_hours = float(cfg.get("cleanup_max_age_hours", 336))
+    if max_age_hours <= 0 or not user_db_paths:
+        return results
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+    cutoff_str = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    for db_path in user_db_paths:
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.execute(
+                "DELETE FROM memories WHERE collection = 'conversation' AND timestamp < ?",
+                (cutoff_str,)
+            )
+            deleted = cursor.rowcount
+            conn.commit()
+            conn.close()
+            results["conversations_cleaned"] += deleted
+            if deleted:
+                logger.info(f"Cleaned {deleted} expired conversation entries from {db_path}")
+        except Exception as e:
+            logger.warning(f"Cleanup failed for {db_path}: {e}")
+
+    return results
 
 
 def _bg_summarize(session, memory, inference_client):

@@ -383,6 +383,7 @@ def load_config(path: str) -> dict:
         "chat_summarize_on_quit": getbool("chat", "summarize_on_quit", True),
         "chat_max_turn_retention_minutes": getint("chat", "max_turn_retention_minutes", 60),
         "chat_max_turns_stored": getint("chat", "max_turns_stored", 100),
+        "cleanup_max_age_hours": getfloat("chat", "cleanup_max_age_hours", 336.0),
         "chat_max_persona_chars": getint("chat", "max_persona_chars", 0),  # 0 = unlimited
         "chat_max_memory_results": getint("chat", "max_memory_results", 3),
         "chat_persona_pct": getint("chat", "persona_pct", 25),  # % of context for persona
