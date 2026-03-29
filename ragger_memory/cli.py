@@ -1447,8 +1447,11 @@ Examples:
     elif args.verb == "housekeeping":
         # Send SIGUSR1 to running daemon
         import signal
+        import getpass
+        username = getpass.getuser()
+        lock_path = f"/tmp/ragger-housekeeping-{username}.lock"
         pid = None
-        for pid_path in ["/var/run/ragger-housekeeping.lock", "/tmp/ragger-housekeeping.lock"]:
+        for pid_path in [lock_path]:
             try:
                 with open(pid_path) as f:
                     pid = int(f.read().strip())
@@ -1457,7 +1460,7 @@ Examples:
                 continue
 
         if not pid:
-            print("Error: no running daemon found (no housekeeping lock file)")
+            print(f"Error: no instance owns housekeeping for user '{username}'")
             return
 
         try:
