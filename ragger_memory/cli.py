@@ -1308,6 +1308,23 @@ Examples:
         src = sqlite3.connect(src_path)
         dst = sqlite3.connect(dst_path)
 
+        # Resolve user_id for provenance when moving to common
+        user_id = None
+        if args.direction == "to-common":
+            if args.user:
+                username = args.user
+            else:
+                import getpass as _gp
+                username = _gp.getuser()
+            row = dst.execute(
+                "SELECT id FROM users WHERE username = ?", (username,)
+            ).fetchone()
+            if row:
+                user_id = row[0]
+            else:
+                print(f"Warning: user {username!r} not found in common DB users table. "
+                      f"Records will be moved without user_id.")
+
         # Build WHERE clause
         conditions = []
         params = []
@@ -1353,10 +1370,18 @@ Examples:
             ids = []
             for row in rows:
                 ids.append(row[0])
-                dst.execute(
-                    "INSERT INTO memories (text, embedding, metadata, timestamp, collection, category, tags) "
-                    "VALUES (?,?,?,?,?,?,?)", row[1:]
-                )
+                if user_id is not None:
+                    # Moving to common: set user_id for provenance
+                    dst.execute(
+                        "INSERT INTO memories (text, embedding, metadata, timestamp, collection, category, tags, user_id) "
+                        "VALUES (?,?,?,?,?,?,?,?)", (*row[1:], user_id)
+                    )
+                else:
+                    # Moving to user or no user_id available: preserve existing user_id
+                    dst.execute(
+                        "INSERT INTO memories (text, embedding, metadata, timestamp, collection, category, tags) "
+                        "VALUES (?,?,?,?,?,?,?)", row[1:]
+                    )
             dst.commit()
 
             batch = 500
