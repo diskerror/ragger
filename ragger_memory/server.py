@@ -935,8 +935,9 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
                 pass
             return False
 
-    # Register lock acquisition callback on _get_memory
-    _get_memory._hk_acquire = _acquire_user_hk_lock
+    # Register lock acquisition callback on _get_memory (only if housekeeping enabled)
+    if _hk_interval > 0:
+        _get_memory._hk_acquire = _acquire_user_hk_lock
 
     # Background housekeeping timer
     _hk_interval = int(cfg.get("housekeeping_interval", 60))
