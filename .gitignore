@@ -34,3 +34,4 @@ _old_*
 .cache/
 
 memories.db
+deploy.sh

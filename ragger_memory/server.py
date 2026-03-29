@@ -61,6 +61,29 @@ def _get_memory(username: str = None):
 
     return _user_memories[username]
 
+def _preload_local_model(model_name: str):
+    """Preload a model on local inference engines in a background thread."""
+    import threading
+    if not model_name or not _inference_client:
+        return
+    try:
+        endpoint = _inference_client._resolve_endpoint(model_name)
+        url = endpoint.api_url
+        if not any(h in url for h in ('localhost', '127.0.0.', '192.168.', '10.', '0.0.0.0')):
+            return
+    except Exception:
+        return
+
+    def _do_preload():
+        err = _inference_client.ensure_model_loaded(model_name)
+        if err:
+            print(f"Model preload skipped: {err}")
+        else:
+            print(f"Preloaded model: {model_name}")
+
+    threading.Thread(target=_do_preload, daemon=True).start()
+
+
 # Web session tokens: {token_str: {"username": ..., "expires": timestamp}}
 import time
 import secrets
@@ -484,6 +507,9 @@ class RaggerHandler(BaseHTTPRequestHandler):
                 username = user["username"]
                 backend = _memory._backend
                 backend.update_user_preferred_model(username, model)
+                # Preload on local engines
+                if _inference_client:
+                    _preload_local_model(model)
                 self._respond(200, {"status": "updated", "model": model, "username": username})
             
             elif self.path == '/chat':
@@ -855,6 +881,10 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         print(f"Warmup: embedding cache loaded ({_memory.count()} memories)")
     except Exception as e:
         print(f"Warmup: {e}")
+
+    # Preload default model on local inference engines
+    if _inference_client and _inference_client.model:
+        _preload_local_model(_inference_client.model)
     
     try:
         server.serve_forever()
