@@ -485,6 +485,16 @@ class RaggerHandler(BaseHTTPRequestHandler):
 
                 response_text = ""
                 try:
+                    # Ensure model is loaded (auto-load for local engines)
+                    load_err = _inference_client.ensure_model_loaded(use_model)
+                    if load_err:
+                        event = json.dumps({"error": load_err})
+                        self.wfile.write(f"data: {event}\n\n".encode())
+                        self.wfile.flush()
+                        self.wfile.write(f"data: {json.dumps({'done': True})}\n\n".encode())
+                        self.wfile.flush()
+                        return
+
                     stream = _inference_client.chat(
                         messages=full_messages,
                         stream=True,

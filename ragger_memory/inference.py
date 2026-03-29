@@ -153,6 +153,64 @@ class InferenceClient:
 
         return cls(endpoints=endpoints, model=model, max_tokens=max_tokens)
 
+    def ensure_model_loaded(self, model: Optional[str] = None) -> Optional[str]:
+        """
+        Check if the model is loaded in a local inference engine. If not, trigger
+        a load and return a status message. Returns None if already loaded or if
+        the endpoint doesn't support model management.
+
+        Currently supports LM Studio's /api/v1/models API.
+        """
+        use_model = model or self.model
+        endpoint = self._resolve_endpoint(use_model)
+        base_url = endpoint.api_url.rstrip("/")
+
+        # Only attempt for local endpoints (LM Studio v1 API)
+        # Derive the management API base from the OpenAI-compat URL
+        # e.g. http://localhost:1234/v1 → http://localhost:1234/api/v1
+        if "/v1" in base_url:
+            mgmt_base = base_url.rsplit("/v1", 1)[0] + "/api/v1"
+        else:
+            return None  # not a recognized local engine
+
+        try:
+            # Check if model is loaded
+            req = urllib.request.Request(f"{mgmt_base}/models")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
+
+            models = data.get("models", data.get("data", []))
+            for m in models:
+                key = m.get("key", m.get("id", ""))
+                loaded = len(m.get("loaded_instances", [])) > 0
+                if key == use_model and loaded:
+                    return None  # already loaded
+
+            # Model not loaded — trigger load
+            logger.info(f"Model {use_model!r} not loaded, requesting load...")
+            load_body = json.dumps({"model": use_model}).encode()
+            load_req = urllib.request.Request(
+                f"{mgmt_base}/models/load",
+                data=load_body,
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(load_req, timeout=120) as load_resp:
+                load_data = json.loads(load_resp.read())
+                load_time = load_data.get("load_time_seconds", "?")
+                logger.info(f"Model {use_model!r} loaded in {load_time}s")
+                return None  # loaded successfully
+
+        except urllib.error.URLError as e:
+            if "Connection refused" in str(e) or "urlopen error" in str(e):
+                return f"Inference engine not reachable at {mgmt_base}"
+            return f"Failed to load model {use_model}: {e}"
+        except TimeoutError:
+            return f"Model {use_model} load timed out"
+        except Exception as e:
+            logger.warning(f"ensure_model_loaded error: {e}")
+            return None  # fail open — let chat attempt proceed
+
     def chat(
         self,
         messages: List[Dict[str, str]],
