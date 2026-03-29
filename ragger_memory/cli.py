@@ -873,11 +873,7 @@ Examples:
                         help="Show what would be moved without moving")
 
     p_housekeeping = sub.add_parser("housekeeping",
-        help="Run housekeeping: summarize idle sessions + clean expired conversations (for cron)")
-    p_housekeeping.add_argument("--port", type=int, default=None,
-                                help="Server port (default: from config)")
-    p_housekeeping.add_argument("--host", type=str, default="localhost",
-                                help="Server host (default: localhost)")
+        help="Trigger housekeeping on running daemon (sends SIGUSR1)")
 
     sub.add_parser("update-model", help="Download/update embedding model")
 
@@ -1449,36 +1445,34 @@ Examples:
         conn.close()
 
     elif args.verb == "housekeeping":
-        # Call the running server's /housekeeping endpoint
-        cfg = get_config()
-        port = args.port or cfg.get("port", 8432)
-        host = args.host
-        token = load_token()
-        if not token:
-            print("Error: no auth token found. Run 'ragger add-self' first.")
+        # Send SIGUSR1 to running daemon
+        import signal
+        pid = None
+        for pid_path in ["/var/run/ragger.pid", "/tmp/ragger.pid"]:
+            try:
+                with open(pid_path) as f:
+                    pid = int(f.read().strip())
+                break
+            except (FileNotFoundError, ValueError):
+                continue
+
+        if not pid:
+            print("Error: no running daemon found (no PID file)")
             return
 
-        import urllib.request
-        import urllib.error
-        url = f"http://{host}:{port}/housekeeping"
-        req = urllib.request.Request(
-            url,
-            data=b"{}",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                import json as _json
-                result = _json.loads(resp.read())
-                print(f"Housekeeping complete:")
-                print(f"  Sessions summarized: {result.get('sessions_expired', 0)}")
-                print(f"  Conversations cleaned: {result.get('conversations_cleaned', 0)}")
-        except urllib.error.URLError as e:
-            print(f"Error: cannot reach server at {url}: {e}")
+            os.kill(pid, 0)  # check if alive
+        except ProcessLookupError:
+            print(f"Error: daemon (pid {pid}) is not running")
+            return
+        except PermissionError:
+            pass  # alive but different user — signal will still work if permitted
+
+        try:
+            os.kill(pid, signal.SIGUSR1)
+            print(f"✓ Housekeeping triggered (pid {pid})")
+        except PermissionError:
+            print(f"Error: permission denied signaling pid {pid} (try sudo)")
         except Exception as e:
             print(f"Error: {e}")
 

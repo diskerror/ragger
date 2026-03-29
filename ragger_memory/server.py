@@ -5,6 +5,7 @@ HTTP server for Ragger Memory
 import json
 import logging
 import os
+import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from .memory import RaggerMemory
@@ -885,7 +886,55 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     # Preload default model on local inference engines
     if _inference_client and _inference_client.model:
         _preload_local_model(_inference_client.model)
-    
+
+    # Write PID file
+    pid_file = "/var/run/ragger.pid"
+    try:
+        with open(pid_file, "w") as f:
+            f.write(str(os.getpid()))
+        print(f"PID file: {pid_file}")
+    except PermissionError:
+        pid_file = "/tmp/ragger.pid"
+        with open(pid_file, "w") as f:
+            f.write(str(os.getpid()))
+        print(f"PID file: {pid_file}")
+
+    # SIGUSR1 handler for housekeeping
+    import signal as _signal
+    _housekeeping_requested = threading.Event()
+
+    def _sigusr1_handler(signum, frame):
+        _housekeeping_requested.set()
+
+    _signal.signal(_signal.SIGUSR1, _sigusr1_handler)
+
+    # Background housekeeping timer (every 60s + on SIGUSR1)
+    def _housekeeping_loop():
+        while True:
+            # Wait up to 60s, or until signaled
+            _housekeeping_requested.wait(timeout=60)
+            _housekeeping_requested.clear()
+            try:
+                user_db_paths = set()
+                for um in _user_memories.values():
+                    if um and um._user_backend and hasattr(um._user_backend, 'db_path'):
+                        user_db_paths.add(um._user_backend.db_path)
+                results = run_housekeeping(
+                    memory=_memory,
+                    inference_client=_inference_client,
+                    memory_resolver=_get_memory,
+                    user_db_paths=list(user_db_paths),
+                )
+                total = results.get("sessions_expired", 0) + results.get("conversations_cleaned", 0)
+                if total > 0:
+                    logger.info(f"Housekeeping: {results['sessions_expired']} sessions expired, "
+                              f"{results['conversations_cleaned']} conversations cleaned")
+            except Exception as e:
+                logger.error(f"Housekeeping error: {e}")
+
+    _hk_thread = threading.Thread(target=_housekeeping_loop, daemon=True)
+    _hk_thread.start()
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -893,3 +942,7 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     finally:
         server.server_close()
         _memory.close()
+        try:
+            os.remove(pid_file)
+        except OSError:
+            pass
