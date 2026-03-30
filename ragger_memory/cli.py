@@ -834,8 +834,9 @@ Examples:
     sub.add_parser("add-all", help="Provision all users with home directories (requires sudo)")
     p_rm_user = sub.add_parser("remove-user", help="Remove a user (requires sudo)")
     p_rm_user.add_argument("username", type=str, help="Username to remove")
-    p_rm_user.add_argument("--keep-data", action="store_true",
-                           help="Keep ~/.ragger/ directory (only remove from DB and group)")
+    # --keep-data removed: we always keep user data. A sudoer can rm ~/.ragger/ manually.
+    # p_rm_user.add_argument("--keep-data", action="store_true",
+    #                        help="Keep ~/.ragger/ directory (only remove from DB and group)")
     p_passwd = sub.add_parser("passwd", help="Change password (own or another user's with sudo)")
     p_passwd.add_argument("username", nargs="?", default=None, help="Target user (default: self)")
 
@@ -1099,7 +1100,6 @@ Examples:
         from .embedding import Embedder
         from .sqlite_backend import SqliteBackend
         username = args.username
-        keep_data = getattr(args, 'keep_data', False)
 
         if os.getuid() != 0:
             print("Error: remove-user requires sudo")
@@ -1154,23 +1154,7 @@ Examples:
         except Exception as e:
             errors.append(f"token removal: {e}")
 
-        # 4. Optionally remove ~/.ragger/ directory
-        if not keep_data:
-            try:
-                import pwd as pwmod
-                pw = pwmod.getpwnam(username)
-                ragger_dir = os.path.join(pw.pw_dir, ".ragger")
-                if os.path.isdir(ragger_dir):
-                    shutil.rmtree(ragger_dir)
-                    print(f"✓ Removed {ragger_dir}")
-                else:
-                    print(f"  No ~/.ragger/ directory found (skipped)")
-            except KeyError:
-                pass  # already reported above
-            except Exception as e:
-                errors.append(f"directory removal: {e}")
-        else:
-            print(f"  Kept ~/.ragger/ directory (--keep-data)")
+        # User data (~/.ragger/) is always kept. A sudoer can remove it manually.
 
         if errors:
             print(f"\nWarnings:")
