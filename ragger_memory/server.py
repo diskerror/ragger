@@ -12,7 +12,7 @@ from .memory import RaggerMemory
 from .auth import load_token, validate_token, hash_token, ensure_token, token_path
 from .inference import InferenceClient
 from .chat_sessions import (get_or_create_session, load_workspace_files,
-                             cleanup_expired_sessions, run_housekeeping)
+                             run_housekeeping)
 
 logger = logging.getLogger(__name__)
 
@@ -617,14 +617,6 @@ class RaggerHandler(BaseHTTPRequestHandler):
                                 )
                             except Exception as e:
                                 logger.warning(f"Turn storage failed: {e}")
-
-                    # Cleanup expired sessions in background
-                    import threading
-                    threading.Thread(
-                        target=cleanup_expired_sessions,
-                        args=(_memory, _inference_client, _get_memory),
-                        daemon=True
-                    ).start()
 
                 except Exception as e:
                     error_event = json.dumps({"error": str(e)})
