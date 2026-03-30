@@ -47,10 +47,16 @@ def mock_memory():
 
 @pytest.fixture
 def test_server(mock_memory):
-    """Start a test HTTP server with mock backend."""
-    # Inject mock into server module
-    original = server_module._memory
+    """Start a test HTTP server with mock backend, auth disabled."""
+    original_memory = server_module._memory
+    original_token = server_module._server_token
     server_module._memory = mock_memory
+    server_module._server_token = None  # disable auth (single_user + no token)
+    
+    from ragger_memory.config import get_config
+    cfg = get_config()
+    orig_single_user = cfg.get("single_user", True)
+    cfg["single_user"] = True
     
     port = _find_free_port()
     httpd = HTTPServer(('127.0.0.1', port), RaggerHandler)
@@ -60,7 +66,9 @@ def test_server(mock_memory):
     yield port
     
     httpd.shutdown()
-    server_module._memory = original
+    server_module._memory = original_memory
+    server_module._server_token = original_token
+    cfg["single_user"] = orig_single_user
 
 
 def _get(port, path):

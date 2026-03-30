@@ -58,12 +58,13 @@ def register_server():
     
     original_mem = server_module._memory
     original_token = server_module._server_token
-    # Set a server token so auth is enabled but _check_auth won't block /register
-    # Actually _check_auth is called first — we need it to pass.
-    # The /register endpoint re-checks the Authorization header itself.
-    # Set _server_token to None so _check_auth returns the anonymous user.
     server_module._memory = mock_mem
-    server_module._server_token = None  # auth disabled = anonymous access
+    server_module._server_token = None  # auth disabled (single_user + no token → anonymous)
+    
+    from ragger_memory.config import get_config
+    cfg = get_config()
+    orig_single_user = cfg.get("single_user", True)
+    cfg["single_user"] = True
     
     port = _find_free_port()
     httpd = HTTPServer(('127.0.0.1', port), RaggerHandler)
@@ -75,6 +76,7 @@ def register_server():
     httpd.shutdown()
     server_module._memory = original_mem
     server_module._server_token = original_token
+    cfg["single_user"] = orig_single_user
 
 
 class TestRegisterEndpoint:
