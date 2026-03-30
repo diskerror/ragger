@@ -656,6 +656,54 @@ def get_config_path() -> str | None:
     return _config_path
 
 
+# Keys that cannot be changed at runtime (require restart)
+_RESTART_REQUIRED = frozenset({
+    "host", "port", "single_user", "db_path", "common_db_path",
+    "tls_cert", "tls_key", "embedding_model", "embedding_dimensions",
+    "model_dir",
+})
+
+
+def reload_config() -> dict[str, tuple]:
+    """
+    Re-read config from INI file(s) and update the global config in-place.
+
+    Returns dict of changed keys: {key: (old_value, new_value)}.
+    Keys in _RESTART_REQUIRED are logged but NOT applied (need restart).
+    """
+    global _config
+    import logging
+    log = logging.getLogger(__name__)
+
+    if _config is None:
+        init_config()
+        return {}
+
+    sys_path, user_path = find_config_files("")
+    # Use the same paths as initial load
+    if _config_path and os.path.exists(_config_path):
+        if _is_multi_user:
+            sys_path = _config_path
+        else:
+            user_path = _config_path
+
+    new_cfg = load_layered_config(sys_path, user_path)
+
+    changes = {}
+    for key in new_cfg:
+        old_val = _config.get(key)
+        new_val = new_cfg[key]
+        if old_val != new_val:
+            if key in _RESTART_REQUIRED:
+                log.warning(f"Config reload: '{key}' changed but requires restart "
+                            f"({old_val!r} → {new_val!r})")
+            else:
+                changes[key] = (old_val, new_val)
+                _config[key] = new_val
+
+    return changes
+
+
 # ---------------------------------------------------------------------------
 # Convenience accessors (backward compatibility)
 # ---------------------------------------------------------------------------

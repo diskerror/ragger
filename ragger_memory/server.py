@@ -897,9 +897,37 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         f.write(str(os.getpid()))
     print(f"PID file: {pid_file}")
 
-    # SIGUSR1 handler for housekeeping
+    # Signal handlers
     import signal as _signal
     import fcntl
+
+    # SIGHUP → reload config from INI
+    def _sighup_handler(signum, frame):
+        try:
+            from .config import reload_config
+            changes = reload_config()
+            if changes:
+                for key, (old, new) in changes.items():
+                    logger.info(f"Config reload: {key} = {new!r} (was {old!r})")
+                # Re-initialize inference client if endpoints changed
+                if any(k.startswith("inference") for k in changes):
+                    global _inference_client
+                    try:
+                        from .config import get_config
+                        cfg = get_config()
+                        _inference_client = InferenceClient.from_config(cfg)
+                        logger.info("Inference client reloaded")
+                    except Exception as e:
+                        logger.error(f"Inference client reload failed: {e}")
+                logger.info(f"Config reloaded: {len(changes)} value(s) changed")
+            else:
+                logger.info("Config reloaded: no changes")
+        except Exception as e:
+            logger.error(f"Config reload failed: {e}")
+
+    _signal.signal(_signal.SIGHUP, _sighup_handler)
+
+    # SIGUSR1 → trigger housekeeping
     _housekeeping_requested = threading.Event()
 
     def _sigusr1_handler(signum, frame):

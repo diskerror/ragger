@@ -747,6 +747,8 @@ Verbs:
   mcp               Run as MCP server (stdin/stdout)
   rebuild-bm25      Rebuild BM25 index
   rebuild-embeddings Rebuild embeddings with current model
+  housekeeping      Trigger housekeeping on running daemon
+  reload            Reload config on running daemon (SIGHUP)
   update-model      Download/update embedding model
   help              Show this help
 
@@ -874,6 +876,9 @@ Examples:
 
     p_housekeeping = sub.add_parser("housekeeping",
         help="Trigger housekeeping on running daemon (sends SIGUSR1)")
+
+    sub.add_parser("reload",
+        help="Reload config on running daemon (sends SIGHUP)")
 
     sub.add_parser("update-model", help="Download/update embedding model")
 
@@ -1474,6 +1479,33 @@ Examples:
         try:
             os.kill(pid, signal.SIGUSR1)
             print(f"✓ Housekeeping triggered (pid {pid})")
+        except PermissionError:
+            print(f"Error: permission denied signaling pid {pid} (try sudo)")
+        except Exception as e:
+            print(f"Error: {e}")
+
+    elif args.verb == "reload":
+        # Send SIGHUP to running daemon to reload config
+        import signal
+        import glob
+        pid = None
+        for pid_path in glob.glob("/tmp/ragger/server-*.pid"):
+            try:
+                with open(pid_path) as f:
+                    pid = int(f.read().strip())
+                os.kill(pid, 0)  # check alive
+                break
+            except (FileNotFoundError, ValueError, ProcessLookupError):
+                pid = None
+                continue
+
+        if not pid:
+            print("Error: no running ragger daemon found")
+            return
+
+        try:
+            os.kill(pid, signal.SIGHUP)
+            print(f"✓ Config reload triggered (pid {pid})")
         except PermissionError:
             print(f"Error: permission denied signaling pid {pid} (try sudo)")
         except Exception as e:
