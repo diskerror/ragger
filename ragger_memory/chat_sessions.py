@@ -86,63 +86,32 @@ def get_or_create_session(session_id: Optional[str], username: str) -> ChatSessi
 def load_workspace_files() -> str:
     """Load persona/workspace files for system prompt.
     
-    SOUL.md priority:
-    - Single-user mode: ~/.ragger/SOUL.md first, fall back to /var/ragger/SOUL.md
-    - Multi-user mode: /var/ragger/SOUL.md only (no user fallback)
-    
-    Other files (USER.md, MEMORY.md): user dir only
-    Shared files (AGENTS.md, TOOLS.md): follow same priority as SOUL.md
+    SOUL.md: /var/ragger/SOUL.md first, fallback to ~/.ragger/SOUL.md
+    Other files (USER.md, AGENTS.md, TOOLS.md): ~/.ragger/ only
     """
-    from .config import get_config
-    cfg = get_config()
-    
     user_dir = os.path.expanduser("~/.ragger")
     common_dir = "/var/ragger"
     
-    # Multi-user mode requires SOUL.md in common dir
-    if not cfg["single_user"]:
-        soul_path = os.path.join(common_dir, "SOUL.md")
-        if not os.path.exists(soul_path):
-            raise RuntimeError(
-                f"Multi-user mode requires SOUL.md in {common_dir}\n"
-                "SOUL.md defines the assistant's personality and must be present for consistent behavior."
-            )
-    
-    # (filename, allow_common)
-    file_specs = [
-        ("SOUL.md", True),    # Allow common dir
-        ("USER.md", False),   # User only
-        ("AGENTS.md", True),  # Allow common dir
-        ("TOOLS.md", True),   # Allow common dir
-    ]
-    
+    files = ["SOUL.md", "USER.md", "AGENTS.md", "TOOLS.md"]
     parts = []
     
-    for fname, allow_common in file_specs:
+    for fname in files:
         fpath = None
         
-        if cfg["single_user"]:
-            # Single-user mode: user dir first, fall back to common
+        if fname == "SOUL.md":
+            # SOUL.md: prefer common directory, fallback to user
+            common_path = os.path.join(common_dir, "SOUL.md")
+            if os.path.exists(common_path):
+                fpath = common_path
+            else:
+                user_path = os.path.join(user_dir, "SOUL.md")
+                if os.path.exists(user_path):
+                    fpath = user_path
+        else:
+            # All other files: user directory only
             user_path = os.path.join(user_dir, fname)
             if os.path.exists(user_path):
                 fpath = user_path
-            elif allow_common:
-                common_path = os.path.join(common_dir, fname)
-                if os.path.exists(common_path):
-                    fpath = common_path
-        else:
-            # Multi-user mode: common dir first, NO fallback for SOUL.md
-            if allow_common:
-                common_path = os.path.join(common_dir, fname)
-                if os.path.exists(common_path):
-                    fpath = common_path
-            
-            # For non-SOUL files with allow_common, fall back to user
-            # For SOUL.md in multi-user mode, stop here (no fallback)
-            if not fpath and (fname != "SOUL.md" or not allow_common):
-                user_path = os.path.join(user_dir, fname)
-                if os.path.exists(user_path):
-                    fpath = user_path
         
         if fpath:
             try:
