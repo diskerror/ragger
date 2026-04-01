@@ -86,8 +86,8 @@ def get_or_create_session(session_id: Optional[str], username: str) -> ChatSessi
 def load_workspace_files() -> str:
     """Load persona/workspace files for system prompt.
     
-    SOUL.md: /var/ragger/SOUL.md first, fallback to ~/.ragger/SOUL.md
-    Other files (USER.md, AGENTS.md, TOOLS.md): ~/.ragger/ only
+    SOUL.md: /var/ragger/SOUL.md first (shared personality), ~/.ragger/SOUL.md fallback
+    Other files: ~/.ragger/ first (user override), /var/ragger/ fallback (admin defaults)
     """
     user_dir = os.path.expanduser("~/.ragger")
     common_dir = "/var/ragger"
@@ -99,7 +99,7 @@ def load_workspace_files() -> str:
         fpath = None
         
         if fname == "SOUL.md":
-            # SOUL.md: prefer common directory, fallback to user
+            # SOUL.md: common first (shared personality), user fallback
             common_path = os.path.join(common_dir, "SOUL.md")
             if os.path.exists(common_path):
                 fpath = common_path
@@ -108,10 +108,14 @@ def load_workspace_files() -> str:
                 if os.path.exists(user_path):
                     fpath = user_path
         else:
-            # All other files: user directory only
+            # Other files: user first (override), common fallback
             user_path = os.path.join(user_dir, fname)
             if os.path.exists(user_path):
                 fpath = user_path
+            else:
+                common_path = os.path.join(common_dir, fname)
+                if os.path.exists(common_path):
+                    fpath = common_path
         
         if fpath:
             try:
