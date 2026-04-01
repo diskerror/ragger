@@ -1399,13 +1399,11 @@ Examples:
     # Deletes should export a TSV of affected records (minus embedding) first.
 
     elif args.verb == "housekeeping":
-        # Send SIGUSR1 to running daemon
+        # Send SIGUSR1 to running daemon via server PID file
         import signal
-        import getpass
-        username = getpass.getuser()
-        lock_path = f"/tmp/ragger/housekeeping-{username}.lock"
+        import glob
         pid = None
-        for pid_path in [lock_path]:
+        for pid_path in glob.glob("/tmp/ragger/server-*.pid"):
             try:
                 with open(pid_path) as f:
                     pid = int(f.read().strip())
@@ -1414,7 +1412,7 @@ Examples:
                 continue
 
         if not pid:
-            print(f"Error: no instance owns housekeeping for user '{username}'")
+            print("Error: no running ragger daemon found")
             return
 
         try:
@@ -1423,13 +1421,13 @@ Examples:
             print(f"Error: daemon (pid {pid}) is not running")
             return
         except PermissionError:
-            pass  # alive but different user — signal will still work if permitted
+            pass  # alive but different user — signal may need sudo
 
         try:
             os.kill(pid, signal.SIGUSR1)
             print(f"✓ Housekeeping triggered (pid {pid})")
         except PermissionError:
-            print(f"Error: permission denied signaling pid {pid} (try sudo)")
+            print(f"Error: permission denied. Use sudo to signal the daemon.")
         except Exception as e:
             print(f"Error: {e}")
 
