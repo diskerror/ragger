@@ -953,6 +953,9 @@ Examples:
             print(f"✓ Created ~/.ragger/token for {username}")
         else:
             print(f"Token already exists for {username}")
+        print(f"\nYour token: {token}\n"
+              f"Use this in your client config (OpenClaw, Claude Desktop, etc.).\n"
+              f"Token file: ~/.ragger/token")
         # Register directly in DB
         try:
             reg_db = cfg["db_path"] if cfg["single_user"] else cfg["common_db_path"]
@@ -1025,6 +1028,8 @@ Examples:
             backend.close()
         except Exception as e:
             print(f"Error: {e}")
+        print(f"\nToken file: ~{username}/.ragger/token")
+        print(f"The user will need to update their client config if the token is rotated.")
 
     elif args.verb == "add-all":
         import os

@@ -458,6 +458,26 @@ class RaggerHandler(BaseHTTPRequestHandler):
                     _preload_local_model(model)
                 self._respond(200, {"status": "updated", "model": model, "username": username})
             
+            elif self.path == '/user/rotate-token':
+                # POST /user/rotate-token — rotate the authenticated user's token
+                from .auth import rotate_token_for_user, hash_token as _hash_token
+                import pwd as _pwd
+                username = user["username"]
+                try:
+                    pw = _pwd.getpwnam(username)
+                    new_token, new_hash = rotate_token_for_user(username, pw.pw_dir)
+                    # Update DB
+                    _memory._backend.update_user_token(username, new_hash)
+                    self._respond(200, {
+                        "token": new_token,
+                        "username": username,
+                        "status": "rotated"
+                    })
+                except KeyError:
+                    self._respond(404, {"error": f"system user not found: {username}"})
+                except Exception as e:
+                    self._respond(500, {"error": str(e)})
+
             elif self.path == '/chat':
                 # Memory-augmented chat with SSE streaming
                 if not _inference_client:
@@ -703,6 +723,22 @@ class RaggerHandler(BaseHTTPRequestHandler):
             backend = _memory._backend
             model = backend.get_user_preferred_model(username)
             self._respond(200, {"model": model, "username": username})
+        elif self.path == '/user/token':
+            # GET /user/token — show current token (read from user's token file)
+            import pwd as _pwd
+            username = user["username"]
+            try:
+                pw = _pwd.getpwnam(username)
+                token_file = os.path.join(pw.pw_dir, ".ragger", "token")
+                with open(token_file) as f:
+                    token = f.read().strip()
+                self._respond(200, {"token": token, "username": username})
+            except KeyError:
+                self._respond(404, {"error": f"system user not found: {username}"})
+            except FileNotFoundError:
+                self._respond(404, {"error": f"no token file for {username}"})
+            except PermissionError:
+                self._respond(403, {"error": "cannot read token file"})
         else:
             # Try serving static web UI files
             self._serve_static()
