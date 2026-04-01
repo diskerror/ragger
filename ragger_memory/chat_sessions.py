@@ -86,9 +86,16 @@ def get_or_create_session(session_id: Optional[str], username: str) -> ChatSessi
 def load_workspace_files() -> str:
     """Load persona/workspace files for system prompt.
     
-    SOUL.md: /var/ragger/SOUL.md first (shared personality), ~/.ragger/SOUL.md fallback
-    Other files: ~/.ragger/ first (user override), /var/ragger/ fallback (admin defaults)
+    Single-user mode: only ~/.ragger/
+    Multi-user mode:
+      - SOUL.md: /var/ragger/ first (shared personality), ~/.ragger/ fallback
+      - Other files: ~/.ragger/ first (user override), /var/ragger/ fallback (admin defaults)
+    
+    TODO: Make persona file load pattern configurable via common config
     """
+    from .config import get_config
+    cfg = get_config()
+    
     user_dir = os.path.expanduser("~/.ragger")
     common_dir = "/var/ragger"
     
@@ -98,8 +105,13 @@ def load_workspace_files() -> str:
     for fname in files:
         fpath = None
         
-        if fname == "SOUL.md":
-            # SOUL.md: common first (shared personality), user fallback
+        if cfg["single_user"]:
+            # Single-user mode: only read from user directory
+            user_path = os.path.join(user_dir, fname)
+            if os.path.exists(user_path):
+                fpath = user_path
+        elif fname == "SOUL.md":
+            # Multi-user SOUL.md: common first (shared personality), user fallback
             common_path = os.path.join(common_dir, "SOUL.md")
             if os.path.exists(common_path):
                 fpath = common_path
@@ -108,7 +120,7 @@ def load_workspace_files() -> str:
                 if os.path.exists(user_path):
                     fpath = user_path
         else:
-            # Other files: user first (override), common fallback
+            # Multi-user other files: user first (override), common fallback
             user_path = os.path.join(user_dir, fname)
             if os.path.exists(user_path):
                 fpath = user_path
