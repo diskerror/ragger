@@ -53,13 +53,13 @@ class TestProvisionUser:
 
 
 class TestRegisterUserInDb:
-    """Test register_user_in_db with a temp database."""
+    """Test user creation in database."""
 
     def test_register_new_user(self, tmp_path):
         """Should create user in DB."""
         from ragger_memory.embedding import Embedder
         from ragger_memory.sqlite_backend import SqliteBackend
-        from ragger_memory.auth import register_user_in_db, hash_token
+        from ragger_memory.auth import hash_token
 
         db_path = str(tmp_path / "test.db")
         token = generate_token()
@@ -69,7 +69,7 @@ class TestRegisterUserInDb:
         backend = SqliteBackend(embedder, db_path=db_path)
 
         hashed = hash_token(token)
-        user_id = backend.create_user("testuser", hashed, is_admin=False)
+        user_id = backend.create_user("testuser", hashed)
         assert user_id > 0
 
         # Verify

@@ -174,38 +174,6 @@ def provision_user(username: str, home_dir: str | None = None) -> tuple[str, boo
     return token, True
 
 
-def register_user_in_db(username: str, token: str, is_admin: bool = False):
-    """
-    Register a user in the common DB by calling the daemon's store endpoint,
-    or directly if the daemon isn't available.
-    """
-    from .sqlite_backend import SqliteBackend
-    from .embedding import Embedder
-    from .config import get_config
-
-    cfg = get_config()
-    db_path = cfg["common_db_path"] if not cfg["single_user"] else cfg["db_path"]
-
-    # Direct DB access — CLI doesn't use HTTP auth
-    embedder = Embedder()
-    backend = SqliteBackend(embedder, db_path=db_path)
-
-    hashed = hash_token(token)
-
-    # Check if user already exists
-    existing = backend.get_user_by_username(username)
-    if existing:
-        # Update token hash if changed
-        if existing["token_hash"] != hashed:
-            backend.update_user_token(username, hashed)
-        backend.close()
-        return existing["id"]
-
-    user_id = backend.create_user(username, hashed, is_admin=is_admin)
-    backend.close()
-    return user_id
-
-
 def rotate_token_for_user(username: str, home_dir: str | None = None) -> tuple[str, str]:
     """
     Rotate a user's token: generate new token, write to file, return new token + hash.

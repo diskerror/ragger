@@ -93,7 +93,7 @@ class RaggerHandler(BaseHTTPRequestHandler):
         """
         Check bearer token and resolve to user.
         
-        Returns user dict {"id": ..., "username": ..., "is_admin": ...}
+        Returns user dict {"id": ..., "username": ...}
         or None if auth fails. Returns a default user dict if auth is disabled.
         
         Side effect: Sets self._rotation_needed and self._rotation_username
@@ -105,7 +105,7 @@ class RaggerHandler(BaseHTTPRequestHandler):
         
         # Single-user mode with no token configured: auth disabled
         if single_user and _server_token is None:
-            return {"id": None, "username": "anonymous", "is_admin": True}
+            return {"id": None, "username": "anonymous"}
         
         auth = self.headers.get("Authorization", "")
         if not auth.startswith("Bearer "):
@@ -152,11 +152,11 @@ class RaggerHandler(BaseHTTPRequestHandler):
                 hashed = hash_token(token)
                 username = getpass.getuser()
                 try:
-                    user_id = _memory._backend.create_user(username, hashed, is_admin=True)
-                    return {"id": user_id, "username": username, "is_admin": True}
+                    user_id = _memory._backend.create_user(username, hashed)
+                    return {"id": user_id, "username": username}
                 except Exception:
                     pass  # user may already exist (race condition)
-            return {"id": None, "username": "default", "is_admin": True}
+            return {"id": None, "username": "default"}
         
         return None
 
@@ -285,7 +285,6 @@ class RaggerHandler(BaseHTTPRequestHandler):
             _web_sessions[session_token] = {
                 "username": username,
                 "user_id": user.get("id"),
-                "is_admin": user.get("is_admin", False),
                 "expires": time.time() + self.WEB_SESSION_TTL
             }
 
@@ -309,8 +308,7 @@ class RaggerHandler(BaseHTTPRequestHandler):
             return None
         return {
             "id": session["user_id"],
-            "username": session["username"],
-            "is_admin": session["is_admin"]
+            "username": session["username"]
         }
 
     def _get_web_root(self) -> str:
@@ -436,48 +434,6 @@ class RaggerHandler(BaseHTTPRequestHandler):
                 count = mem.delete_batch(memory_ids)
                 self._respond(200, {"deleted": count})
             
-            elif self.path == '/register':
-                username = params.get('username')
-                if not username:
-                    self._respond(400, {"error": "username required"})
-                    return
-                # Extract the bearer token from the request
-                auth_header = self.headers.get("Authorization", "")
-                if not auth_header.startswith("Bearer "):
-                    self._respond(401, {"error": "bearer token required"})
-                    return
-                provided_token = auth_header[7:]
-                # Verify: read the user's token file from the filesystem
-                import pwd
-                try:
-                    pw = pwd.getpwnam(username)
-                except KeyError:
-                    self._respond(400, {"error": f"unknown system user: {username}"})
-                    return
-                user_token_file = os.path.join(pw.pw_dir, ".ragger", "token")
-                if not os.path.exists(user_token_file):
-                    self._respond(400, {"error": f"no token file for {username}"})
-                    return
-                with open(user_token_file) as f:
-                    file_token = f.read().strip()
-                if not validate_token(provided_token, file_token):
-                    self._respond(403, {"error": "token does not match user's token file"})
-                    return
-                # Register user in DB
-                hashed = hash_token(provided_token)
-                backend = _memory._backend
-                existing = backend.get_user_by_username(username)
-                if existing:
-                    if existing.get("token_hash") != hashed:
-                        backend.update_user_token(username, hashed)
-                    self._respond(200, {"status": "exists", "user_id": existing["id"],
-                                        "username": username})
-                else:
-                    is_admin = params.get('is_admin', False)
-                    user_id = backend.create_user(username, hashed, is_admin=is_admin)
-                    self._respond(200, {"status": "created", "user_id": user_id,
-                                        "username": username})
-
             elif self.path == '/search_by_metadata':
                 metadata_filter = params.get('metadata', {})
                 if not metadata_filter:
@@ -801,7 +757,7 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
             if not existing:
                 import getpass
                 username = getpass.getuser()
-                user_id = backend.create_user(username, hashed, is_admin=True)
+                user_id = backend.create_user(username, hashed)
                 print(f"Created user: {username} (id={user_id})")
             else:
                 print(f"User: {existing['username']} (id={existing['id']})")

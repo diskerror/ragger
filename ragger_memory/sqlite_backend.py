@@ -66,7 +66,7 @@ class SqliteBackend(MemoryBackend):
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     username TEXT NOT NULL UNIQUE,
                     token_hash TEXT NOT NULL,
-                    is_admin INTEGER NOT NULL DEFAULT 0,
+                    -- is_admin removed: sudo is the admin gate
                     created TEXT NOT NULL,
                     modified TEXT NOT NULL
                 )
@@ -266,14 +266,13 @@ class SqliteBackend(MemoryBackend):
 
     # --- User management ---
 
-    def create_user(self, username: str, token_hash: str,
-                    is_admin: bool = False) -> int:
+    def create_user(self, username: str, token_hash: str) -> int:
         """Create a user. Returns user id."""
         now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         cursor = self.conn.execute(
-            "INSERT INTO users (username, token_hash, is_admin, created, modified, token_rotated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (username, token_hash, 1 if is_admin else 0, now, now, now)
+            "INSERT INTO users (username, token_hash, created, modified, token_rotated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (username, token_hash, now, now, now)
         )
         self.conn.commit()
         return cursor.lastrowid
@@ -281,22 +280,21 @@ class SqliteBackend(MemoryBackend):
     def get_user_by_token_hash(self, token_hash: str) -> dict | None:
         """Look up user by token hash. Returns dict or None."""
         row = self.conn.execute(
-            "SELECT id, username, is_admin FROM users WHERE token_hash = ?",
+            "SELECT id, username FROM users WHERE token_hash = ?",
             (token_hash,)
         ).fetchone()
         if row:
-            return {"id": row[0], "username": row[1], "is_admin": bool(row[2])}
+            return {"id": row[0], "username": row[1]}
         return None
 
     def get_user_by_username(self, username: str) -> dict | None:
         """Look up user by username. Returns dict or None."""
         row = self.conn.execute(
-            "SELECT id, username, is_admin, token_hash FROM users WHERE username = ?",
+            "SELECT id, username, token_hash FROM users WHERE username = ?",
             (username,)
         ).fetchone()
         if row:
-            return {"id": row[0], "username": row[1],
-                    "is_admin": bool(row[2]), "token_hash": row[3]}
+            return {"id": row[0], "username": row[1], "token_hash": row[2]}
         return None
 
     def update_user_token(self, username: str, token_hash: str):
@@ -354,6 +352,11 @@ class SqliteBackend(MemoryBackend):
             (username,)
         ).fetchone()
         return row[0] if row else None
+
+    def get_user_count(self) -> int:
+        """Return total number of users in the users table."""
+        row = self.conn.execute("SELECT count(*) FROM users").fetchone()
+        return row[0] if row else 0
 
     def delete_user(self, username: str):
         """Remove a user from the users table."""

@@ -36,12 +36,12 @@ def auth_server(mock_embedder, tmp_db):
     
     # Create a test user with password
     token_hash = hash_token("test-bearer-token")
-    backend.create_user("testuser", token_hash, is_admin=False)
+    backend.create_user("testuser", token_hash)
     backend.set_user_password("testuser", hash_password("testpass123"))
     
     # Create admin user
     admin_hash = hash_token("admin-bearer-token")
-    backend.create_user("admin", admin_hash, is_admin=True)
+    backend.create_user("admin", admin_hash)
     backend.set_user_password("admin", hash_password("adminpass"))
     
     # Build a minimal RaggerMemory mock that exposes the real backend
