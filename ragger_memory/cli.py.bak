@@ -531,7 +531,7 @@ def run_chat():
                             logger.info(f"Stored recovery summary for {len(turns)} orphaned turns")
                     
                     # Now expire the old turns
-
+                    _expire_old_turns()
                     print("✓ Recovery complete")
             else:
                 # We have summaries - check if turns are newer than most recent summary
@@ -552,7 +552,7 @@ def run_chat():
                 if orphans and len(orphans) > len(turns) * 0.5:
                     # If more than half are orphans, likely a cleanup issue
                     logger.info(f"Found {len(orphans)} old turns, cleaning up...")
-
+                    _expire_old_turns()
         
         except Exception as e:
             logger.warning(f"Orphan check failed: {e}")
@@ -560,7 +560,7 @@ def run_chat():
     _check_orphaned_turns()
     
     # Clean up old turns at startup
-
+    _expire_old_turns()
 
     try:
         while True:
@@ -642,7 +642,7 @@ def run_chat():
     except KeyboardInterrupt:
         print("\n\nGoodbye!")
     finally:
-
+        _expire_old_turns()  # Final cleanup
         _quit_summary()
         memory.close()
 

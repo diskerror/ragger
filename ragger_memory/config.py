@@ -125,9 +125,6 @@ store_turns = true        # "true" (per-turn), "session" (one growing entry), or
 summarize_on_pause = true
 pause_minutes = 10
 summarize_on_quit = true
-# System hard limits (user can't override)
-max_turn_retention_minutes = 60
-max_turns_stored = 100
 """.format(
     system_path=system_config_path(),
     model_dir=system_model_dir(),
@@ -173,8 +170,6 @@ SERVER_LOCKED = {
     # Auth (server controls rotation policy)
     ("auth", "token_rotation_minutes"),
     # System ceilings (system controls the max, user sets preference within)
-    ("chat", "max_turn_retention_minutes"),
-    ("chat", "max_turns_stored"),
     ("chat", "max_persona_chars_limit"),
     ("chat", "max_memory_results_limit"),
     ("search", "max_search_limit"),
@@ -256,9 +251,6 @@ store_turns = true        # "true" (per-turn), "session" (one growing entry), or
 summarize_on_pause = true
 pause_minutes = 10
 summarize_on_quit = true
-# System hard limits (single-user can modify these)
-max_turn_retention_minutes = 60
-max_turns_stored = 100
 """.format(system_path=system_config_path())
 
     with open(conf_path, "w") as f:
@@ -382,8 +374,6 @@ def load_config(path: str) -> dict:
         "chat_summarize_on_pause": getbool("chat", "summarize_on_pause", True),
         "chat_pause_minutes": getint("chat", "pause_minutes", 10),
         "chat_summarize_on_quit": getbool("chat", "summarize_on_quit", True),
-        "chat_max_turn_retention_minutes": getint("chat", "max_turn_retention_minutes", 60),
-        "chat_max_turns_stored": getint("chat", "max_turns_stored", 100),
         "cleanup_max_age_hours": getfloat("chat", "cleanup_max_age_hours", 336.0),
         "housekeeping_interval": getint("chat", "housekeeping_interval", 60),
         "chat_max_persona_chars": getint("chat", "max_persona_chars", 0),  # 0 = unlimited
@@ -497,8 +487,6 @@ def load_layered_config(system_path: str | None, user_path: str | None) -> dict:
             ("chat", "summarize_on_pause"): "chat_summarize_on_pause",
             ("chat", "pause_minutes"): "chat_pause_minutes",
             ("chat", "summarize_on_quit"): "chat_summarize_on_quit",
-            ("chat", "max_turn_retention_minutes"): "chat_max_turn_retention_minutes",
-            ("chat", "max_turns_stored"): "chat_max_turns_stored",
             ("chat", "max_persona_chars"): "chat_max_persona_chars",
             ("chat", "max_memory_results"): "chat_max_memory_results",
             ("chat", "persona_pct"): "chat_persona_pct",
@@ -511,7 +499,6 @@ def load_layered_config(system_path: str | None, user_path: str | None) -> dict:
         int_keys = {
             "port", "embedding_dimensions", "default_search_limit",
             "inference_max_tokens", "minimum_chunk_size", "chat_pause_minutes",
-            "chat_max_turn_retention_minutes", "chat_max_turns_stored",
             "chat_max_persona_chars", "chat_max_memory_results",
             "chat_persona_pct", "token_rotation_minutes"
         }
@@ -562,8 +549,6 @@ def load_layered_config(system_path: str | None, user_path: str | None) -> dict:
     _clamp_to_ceiling(cfg, "default_search_limit", "max_search_limit")
     _clamp_to_ceiling(cfg, "chat_max_memory_results", "chat_max_memory_results_limit")
     _clamp_to_ceiling(cfg, "chat_max_persona_chars", "chat_max_persona_chars_limit")
-    _clamp_to_ceiling(cfg, "chat_pause_minutes", "chat_max_turn_retention_minutes")
-    _clamp_to_ceiling(cfg, "chat_max_turns_stored", "chat_max_turns_stored")  # already locked, but belt-and-suspenders
 
     return cfg
 

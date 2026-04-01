@@ -60,10 +60,9 @@ class ChatSession:
         if system_content:
             result.append({"role": "system", "content": system_content})
 
-        # Conversation history (bounded)
-        cfg = get_config()
-        max_turns = cfg.get("chat_max_turns_stored", 200)
-        # Keep last N messages (each turn = 2 messages)
+        # Conversation history (bounded to prevent context overflow)
+        # Keep last 100 turns = 200 messages (each turn = user + assistant)
+        max_turns = 100
         history = self.messages[-(max_turns * 2):]
         result.extend(history)
 
