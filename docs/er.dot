@@ -87,7 +87,7 @@ digraph ragger_er {
 
         cpp_bm25 [label="{BM25Index\n(bm25.h)|— k1_, b_\n— doc_freqs_, avg_dl_|+ score(query, doc_id)\n+ search(query, limit)\n+ add_document()}", style="filled,bold", fillcolor="#BBDEFB", penwidth=2];
 
-        cpp_server [label="{Server\n(server.h)|— Impl (pimpl)\n— Crow app|+ run(memory, port)\n+ stop()}", style="filled,bold", fillcolor="#BBDEFB", penwidth=2];
+        cpp_server [label="{Server\n(server.h)|— Impl (pimpl)\n— httplib::Server|+ run(memory, port)\n+ stop()}", style="filled,bold", fillcolor="#BBDEFB", penwidth=2];
 
         cpp_config [label="{Config\n(config.h)  «struct»|port, host, db_path,\nmodel_dir, log_dir,\nsingle_user, ...|+ load(path)\n+ global()}", style="filled,bold", fillcolor="#BBDEFB", penwidth=2];
 

@@ -37,7 +37,7 @@ digraph ragger {
         label="ragger serve  :8432";
         style="filled,bold"; fillcolor="#F5F5F5"; color="#333333"; penwidth=2;
 
-        http [label="HTTP API\n(Crow / Flask)", shape=component, style="filled,bold", fillcolor="#FFF3E0", penwidth=2];
+        http [label="HTTP API\n(cpp-httplib / Flask)", shape=component, style="filled,bold", fillcolor="#FFF3E0", penwidth=2];
         auth [label="Token Auth", shape=diamond, style="filled,bold", fillcolor="#FFF3E0", penwidth=2];
 
         subgraph cluster_engine {
