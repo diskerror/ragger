@@ -24,11 +24,13 @@ class Endpoint:
     """One inference endpoint with its URL, key, model patterns, and API format."""
 
     def __init__(self, name: str, api_url: str, api_key: str = "",
-                 models: str = "*", format: str = "", max_context: int = 0):
+                 models: str = "*", format: str = "", max_context: int = 0,
+                 max_tokens: int = 0):
         self.name = name
         self.api_url = api_url.rstrip("/")
         self.api_key = api_key
         self.max_context = max_context  # 0 = unknown/unlimited
+        self.max_tokens = max_tokens    # 0 = use client default
         self._patterns = [p.strip() for p in models.split(",") if p.strip()]
         # Format: explicit, auto-detected, or default
         self.format_name = format or api_formats.detect_format(self.api_url)
@@ -138,6 +140,7 @@ class InferenceClient:
                 models=ep.get("models", "*"),
                 format=ep.get("format", ""),
                 max_context=ep.get("max_context", 0),
+                max_tokens=ep.get("max_tokens", 0),
             ))
 
         if not endpoints:
@@ -225,8 +228,10 @@ class InferenceClient:
         logger.debug(f"Routing {use_model!r} → {endpoint.name} ({endpoint.format_name})")
 
         url = endpoint.request_url()
+        # Endpoint max_tokens overrides client default; explicit param overrides both
+        effective_max = max_tokens or endpoint.max_tokens or self.max_tokens
         body = endpoint.build_body(
-            messages, use_model, max_tokens or self.max_tokens, stream
+            messages, use_model, effective_max, stream
         )
 
         req = urllib.request.Request(

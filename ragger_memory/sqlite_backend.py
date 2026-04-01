@@ -4,7 +4,7 @@ SQLite backend for Ragger Memory
 import json
 import logging
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Dict
 
@@ -138,6 +138,7 @@ class SqliteBackend(MemoryBackend):
             self._migrate_add_token_rotated_at()
             self._migrate_add_preferred_model()
             self._migrate_add_password_hash()
+            self._migrate_add_web_sessions()
             
             self.conn.commit()
             logger.info("SQLite schema ensured")
@@ -263,6 +264,67 @@ class SqliteBackend(MemoryBackend):
                 logger.info("Migrated users: added password_hash column")
         except sqlite3.Error as e:
             logger.warning(f"password_hash migration skipped: {e}")
+
+    def _migrate_add_web_sessions(self):
+        """Create web_sessions table if it doesn't exist."""
+        try:
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS web_sessions (
+                    token TEXT PRIMARY KEY,
+                    username TEXT NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    created TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                    expires TEXT NOT NULL
+                )
+            """)
+            self.conn.commit()
+        except sqlite3.Error as e:
+            logger.warning(f"web_sessions migration skipped: {e}")
+
+    # --- Web sessions ---
+
+    def create_web_session(self, token: str, username: str, user_id: int,
+                           ttl_seconds: int = 86400) -> None:
+        """Store a web session token."""
+        now = datetime.now(timezone.utc)
+        expires = now + timedelta(seconds=ttl_seconds)
+        self.conn.execute(
+            "INSERT OR REPLACE INTO web_sessions (token, username, user_id, created, expires) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (token, username, user_id,
+             now.strftime('%Y-%m-%dT%H:%M:%SZ'),
+             expires.strftime('%Y-%m-%dT%H:%M:%SZ'))
+        )
+        self.conn.commit()
+
+    def get_web_session(self, token: str) -> dict | None:
+        """Look up a web session. Returns {username, user_id} or None if expired/missing."""
+        row = self.conn.execute(
+            "SELECT username, user_id, expires FROM web_sessions WHERE token = ?",
+            (token,)
+        ).fetchone()
+        if not row:
+            return None
+        expires = datetime.strptime(row[2], '%Y-%m-%dT%H:%M:%SZ').replace(
+            tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) > expires:
+            self.conn.execute("DELETE FROM web_sessions WHERE token = ?", (token,))
+            self.conn.commit()
+            return None
+        return {"username": row[0], "user_id": row[1]}
+
+    def delete_web_session(self, token: str) -> None:
+        """Remove a web session."""
+        self.conn.execute("DELETE FROM web_sessions WHERE token = ?", (token,))
+        self.conn.commit()
+
+    def cleanup_web_sessions(self) -> int:
+        """Remove all expired web sessions. Returns count deleted."""
+        now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        cursor = self.conn.execute(
+            "DELETE FROM web_sessions WHERE expires < ?", (now,))
+        self.conn.commit()
+        return cursor.rowcount
 
     # --- User management ---
 

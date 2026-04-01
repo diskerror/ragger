@@ -293,6 +293,7 @@ def _parse_inference_endpoints(parser) -> list:
                 "models": parser.get(section, "models", fallback="*"),
                 "format": parser.get(section, "format", fallback=""),
                 "max_context": parser.getint(section, "max_context", fallback=0),
+                "max_tokens": parser.getint(section, "max_tokens", fallback=0),
             }
             if ep["api_url"]:
                 endpoints.append(ep)

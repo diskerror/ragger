@@ -78,7 +78,7 @@ def _preload_local_model(model_name: str):
 # Web session tokens: {token_str: {"username": ..., "expires": timestamp}}
 import time
 import secrets
-_web_sessions = {}
+## Web sessions now stored in SQLite — see sqlite_backend.py
 
 
 class RaggerHandler(BaseHTTPRequestHandler):
@@ -280,13 +280,12 @@ class RaggerHandler(BaseHTTPRequestHandler):
                 self._respond(401, {"error": "invalid credentials"})
                 return
 
-            # Generate session token
+            # Generate session token (persisted in DB)
             session_token = secrets.token_urlsafe(32)
-            _web_sessions[session_token] = {
-                "username": username,
-                "user_id": user.get("id"),
-                "expires": time.time() + self.WEB_SESSION_TTL
-            }
+            backend.create_web_session(
+                session_token, username, user.get("id"),
+                ttl_seconds=self.WEB_SESSION_TTL
+            )
 
             self._respond(200, {
                 "token": session_token,
@@ -299,12 +298,10 @@ class RaggerHandler(BaseHTTPRequestHandler):
             self._respond(500, {"error": "login failed"})
 
     def _check_web_session(self, token: str) -> dict | None:
-        """Check if a token is a valid web session. Returns user dict or None."""
-        session = _web_sessions.get(token)
+        """Check if a token is a valid web session (DB-backed). Returns user dict or None."""
+        backend = self.server.memory.backend()
+        session = backend.get_web_session(token)
         if not session:
-            return None
-        if time.time() > session["expires"]:
-            del _web_sessions[token]
             return None
         return {
             "id": session["user_id"],
