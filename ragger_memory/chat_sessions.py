@@ -69,14 +69,25 @@ class ChatSession:
         return result
 
 
-def get_or_create_session(session_id: Optional[str], username: str) -> ChatSession:
-    """Get existing session or create a new one."""
+def get_or_create_session(session_id: Optional[str], username: str, backend=None) -> ChatSession:
+    """Get existing session or create a new one. Restores from database if available."""
     with _sessions_lock:
+        # Check in-memory cache first
         if session_id and session_id in _sessions:
             session = _sessions[session_id]
             session.last_activity = time.time()
             return session
 
+        # Try to restore from database
+        if session_id and backend:
+            db_session = backend.get_chat_session(session_id)
+            if db_session and db_session["username"] == username:
+                session = ChatSession(session_id, username)
+                session.messages = db_session["messages"]
+                _sessions[session_id] = session
+                return session
+
+        # Create new session
         new_id = session_id or str(uuid.uuid4())
         session = ChatSession(new_id, username)
         _sessions[new_id] = session

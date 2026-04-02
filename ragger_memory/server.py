@@ -437,8 +437,25 @@ class RaggerHandler(BaseHTTPRequestHandler):
                     self._respond(400, {"error": "metadata filter required"})
                     return
                 limit = params.get('limit', None)
+                
+                # Parse temporal filters
+                after = None
+                before = None
+                if 'after' in params:
+                    try:
+                        after = datetime.fromisoformat(params['after'].replace('Z', '+00:00'))
+                    except ValueError:
+                        self._respond(400, {"error": "invalid after timestamp format (use ISO 8601)"})
+                        return
+                if 'before' in params:
+                    try:
+                        before = datetime.fromisoformat(params['before'].replace('Z', '+00:00'))
+                    except ValueError:
+                        self._respond(400, {"error": "invalid before timestamp format (use ISO 8601)"})
+                        return
+                
                 mem = _get_memory(user.get('username'))
-                results = mem.search_by_metadata(metadata_filter, limit)
+                results = mem.search_by_metadata(metadata_filter, limit, after, before)
                 self._respond(200, {"results": results, "count": len(results)})
             
             elif self.path == '/user/model':
@@ -488,7 +505,8 @@ class RaggerHandler(BaseHTTPRequestHandler):
 
                 session_id = params.get('session_id')
                 username = user.get('username', 'anonymous')
-                session = get_or_create_session(session_id, username)
+                backend = _memory._backend
+                session = get_or_create_session(session_id, username, backend)
 
                 # Search memory for context (user-scoped in multi-user mode)
                 memory_context = ""
@@ -557,6 +575,16 @@ class RaggerHandler(BaseHTTPRequestHandler):
                     # Update session with assistant response
                     if response_text:
                         session.add_assistant_message(response_text)
+                        
+                        # Save session to database for persistence
+                        try:
+                            backend.save_chat_session(
+                                session.session_id,
+                                username,
+                                session.messages
+                            )
+                        except Exception as e:
+                            logger.warning(f"Session save failed: {e}")
 
                         # Store turn if configured
                         from .config import get_config as _gc

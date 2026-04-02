@@ -139,6 +139,7 @@ class SqliteBackend(MemoryBackend):
             self._migrate_add_preferred_model()
             self._migrate_add_password_hash()
             self._migrate_add_web_sessions()
+            self._migrate_add_chat_sessions()
             
             self.conn.commit()
             logger.info("SQLite schema ensured")
@@ -281,6 +282,24 @@ class SqliteBackend(MemoryBackend):
         except sqlite3.Error as e:
             logger.warning(f"web_sessions migration skipped: {e}")
 
+    def _migrate_add_chat_sessions(self):
+        """Create chat_sessions table if it doesn't exist."""
+        try:
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS chat_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    web_token TEXT,
+                    username TEXT NOT NULL,
+                    messages TEXT NOT NULL,
+                    created TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                    updated TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                    FOREIGN KEY (web_token) REFERENCES web_sessions(token) ON DELETE SET NULL
+                )
+            """)
+            self.conn.commit()
+        except sqlite3.Error as e:
+            logger.warning(f"chat_sessions migration skipped: {e}")
+
     # --- Web sessions ---
 
     def create_web_session(self, token: str, username: str, user_id: int,
@@ -325,6 +344,78 @@ class SqliteBackend(MemoryBackend):
             "DELETE FROM web_sessions WHERE expires < ?", (now,))
         self.conn.commit()
         return cursor.rowcount
+
+    # --- Chat sessions ---
+
+    def save_chat_session(self, session_id: str, username: str, messages: list,
+                         web_token: str = None) -> None:
+        """Save or update a chat session."""
+        import json as json_lib
+        now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        messages_json = json_lib.dumps(messages)
+        
+        # Check if session exists
+        existing = self.conn.execute(
+            "SELECT session_id FROM chat_sessions WHERE session_id = ?",
+            (session_id,)
+        ).fetchone()
+        
+        if existing:
+            # Update existing
+            self.conn.execute(
+                "UPDATE chat_sessions SET messages = ?, updated = ?, web_token = ? "
+                "WHERE session_id = ?",
+                (messages_json, now, web_token, session_id)
+            )
+        else:
+            # Insert new
+            self.conn.execute(
+                "INSERT INTO chat_sessions (session_id, username, messages, web_token, created, updated) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (session_id, username, messages_json, web_token, now, now)
+            )
+        self.conn.commit()
+
+    def get_chat_session(self, session_id: str) -> dict | None:
+        """Retrieve a chat session. Returns {session_id, username, messages, created, updated} or None."""
+        import json as json_lib
+        row = self.conn.execute(
+            "SELECT session_id, username, messages, created, updated FROM chat_sessions "
+            "WHERE session_id = ?",
+            (session_id,)
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "session_id": row[0],
+            "username": row[1],
+            "messages": json_lib.loads(row[2]),
+            "created": row[3],
+            "updated": row[4]
+        }
+
+    def delete_chat_session(self, session_id: str) -> None:
+        """Delete a chat session."""
+        self.conn.execute("DELETE FROM chat_sessions WHERE session_id = ?", (session_id,))
+        self.conn.commit()
+
+    def list_user_chat_sessions(self, username: str, limit: int = 10) -> list:
+        """List recent chat sessions for a user."""
+        import json as json_lib
+        rows = self.conn.execute(
+            "SELECT session_id, messages, created, updated FROM chat_sessions "
+            "WHERE username = ? ORDER BY updated DESC LIMIT ?",
+            (username, limit)
+        ).fetchall()
+        return [
+            {
+                "session_id": row[0],
+                "messages": json_lib.loads(row[1]),
+                "created": row[2],
+                "updated": row[3]
+            }
+            for row in rows
+        ]
 
     # --- User management ---
 
@@ -562,16 +653,19 @@ class SqliteBackend(MemoryBackend):
         cursor = self.conn.execute(f"SELECT COUNT(*) FROM {self._memories_table}")
         return cursor.fetchone()[0]
     
-    def search_by_metadata(self, metadata_filter: dict, limit: int = None) -> list:
+    def search_by_metadata(self, metadata_filter: dict, limit: int = None,
+                          after: datetime = None, before: datetime = None) -> list:
         """
-        Search memories by metadata fields.
+        Search memories by metadata fields with optional temporal filtering.
         
-        Uses SQL WHERE for dedicated columns (collection, category, tags)
+        Uses SQL WHERE for dedicated columns (collection, category, tags, timestamp)
         and Python-side filtering for remaining JSON metadata fields.
         
         Args:
             metadata_filter: Dict of metadata fields to match
             limit: Maximum results to return (None = all)
+            after: Only return memories after this timestamp (inclusive)
+            before: Only return memories before this timestamp (exclusive)
         
         Returns:
             List of dicts with id, text, metadata, timestamp
@@ -595,10 +689,19 @@ class SqliteBackend(MemoryBackend):
                 else:
                     json_filter[k] = v
             
+            # Add temporal filtering
+            if after:
+                sql_conditions.append("timestamp >= ?")
+                sql_params.append(after.strftime('%Y-%m-%dT%H:%M:%SZ'))
+            if before:
+                sql_conditions.append("timestamp < ?")
+                sql_params.append(before.strftime('%Y-%m-%dT%H:%M:%SZ'))
+            
             sql = (f"SELECT id, text, metadata, timestamp, collection, category, tags "
                    f"FROM {self._memories_table}")
             if sql_conditions:
                 sql += " WHERE " + " AND ".join(sql_conditions)
+            sql += " ORDER BY timestamp DESC"
             
             cursor = self.conn.execute(sql, sql_params)
             rows = cursor.fetchall()

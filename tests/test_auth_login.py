@@ -52,7 +52,6 @@ def auth_server(mock_embedder, tmp_db):
     
     original_memory = server_module._memory
     original_token = server_module._server_token
-    original_sessions = server_module._web_sessions.copy()
     server_module._memory = mem
     server_module._server_token = None
     
@@ -72,8 +71,6 @@ def auth_server(mock_embedder, tmp_db):
     backend.close()
     server_module._memory = original_memory
     server_module._server_token = original_token
-    server_module._web_sessions.clear()
-    server_module._web_sessions.update(original_sessions)
     cfg["single_user"] = orig_single_user
 
 
